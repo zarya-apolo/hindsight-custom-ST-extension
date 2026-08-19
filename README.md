@@ -4,8 +4,8 @@ This is an independent browser-only SillyTavern extension. It does not modify Si
 
 Features:
 
-- Hindsight base URL, API key, bank and model selector in the extension menu.
-- Optional model discovery via `GET /v1/models`; if unavailable, Hindsight uses its server-side model selection.
+- Hindsight backend URL, LLM provider URL/key, bank and abstract model selector in the extension menu.
+- Optional model discovery via `GET <provider-url>/models`; the model identifier is provider-agnostic and user-selected.
 - Automatic non-streaming recall before each generation.
 - Asynchronous full-chat retain using one stable Hindsight `document_id` per ST chat.
 - Replaces the Hindsight document after edits, deletes, swipes and regenerated messages are reflected in the current ST chat.
@@ -19,7 +19,11 @@ Important scope behavior:
 
 The extension uses Hindsight tags for scoped memories. In `global`, all chat documents are written to the same bank without tags, so memories can be recalled between chats. In `character` and `chat`, recall is filtered with strict tags. This makes cross-chat memory a user decision rather than a permanent yes/no design decision.
 
-Install by placing this directory under:
+Install from the public GitHub repository URL. The extension must be configured with the Hindsight backend URL; it is never hardcoded to an IP.
+
+The provider URL/key/model configure the LLM used by Hindsight. The Hindsight URL configures the memory backend. They are separate services.
+
+Legacy manual install path:
 
 `public/scripts/extensions/third-party/hindsight-custom-ST-extension`
 

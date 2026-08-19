@@ -13,8 +13,9 @@ import { extension_settings, getContext, saveMetadataDebounced } from '../../../
 const MODULE = 'hindsight';
 const DEFAULTS = {
     enabled: false,
-    baseUrl: 'https://api.hindsight.vectorize.io',
-    apiKey: '',
+    hindsightUrl: '',
+    providerUrl: '',
+    providerApiKey: '',
     bankId: 'sillytavern',
     model: 'auto',
     scope: 'global',
@@ -33,11 +34,13 @@ let recallGenerationKey = '';
 let settingsBound = false;
 
 const settings = () => extension_settings.hindsight;
-const baseUrl = () => String(settings()?.baseUrl || '').replace(/\/+$/, '');
+const hindsightUrl = () => String(settings()?.hindsightUrl || '').replace(/\/+$/, '');
+const providerUrl = () => String(settings()?.providerUrl || '').replace(/\/+$/, '');
 const bankId = () => encodeURIComponent(String(settings()?.bankId || 'sillytavern').trim() || 'sillytavern');
 const modelEndpoint = () => `/v1/default/banks/${bankId()}/llm-model`;
 const modelsEndpoint = '/v1/models';
-const ready = () => Boolean(settings()?.enabled && baseUrl() && settings()?.apiKey);
+const providerEndpoint = () => `/v1/default/banks/${bankId()}/llm-provider`;
+const ready = () => Boolean(settings()?.enabled && hindsightUrl() && providerUrl() && settings()?.providerApiKey);
 
 function status(text, type = '') {
     const el = $('#hindsight_status');
@@ -47,14 +50,14 @@ function status(text, type = '') {
 }
 
 function apiHeaders() {
-    return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settings().apiKey}` };
+    return { 'Content-Type': 'application/json' };
 }
 
 async function hindsightFetch(path, options = {}, timeout = 90000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
     try {
-        const response = await fetch(`${baseUrl()}${path}`, {
+        const response = await fetch(`${hindsightUrl()}${path}`, {
             ...options,
             headers: { ...apiHeaders(), ...(options.headers || {}) },
             signal: controller.signal,
@@ -261,6 +264,9 @@ async function saveSelectedModel() {
     const model = settings().model || 'auto';
     if (model === 'auto' || !ready()) return;
     try {
+        await hindsightFetch(providerEndpoint(), { method: 'PATCH', body: JSON.stringify({
+            base_url: providerUrl(), api_key: settings().providerApiKey, model, provider: settings().provider || 'openai',
+        }) });
         await hindsightFetch(modelEndpoint(), { method: 'PATCH', body: JSON.stringify({ model }) });
         $('#hindsight_model_status').text(`Persisted selection: ${model}`);
         status(`Model selected: ${model}`, 'ready');
@@ -272,27 +278,34 @@ async function saveSelectedModel() {
 
 async function discoverModels() {
     const output = $('#hindsight_model_status');
-    output.text('Discovering models...');
+    output.text('Discovering provider models...');
     try {
-        const data = await hindsightFetch(modelsEndpoint, { method: 'GET' }, 30000);
+        const response = await fetch(`${providerUrl()}/models`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${settings().providerApiKey}` },
+        });
+        const text = await response.text();
+        const data = text ? JSON.parse(text) : {};
+        if (!response.ok) throw new Error(`${response.status}: ${data?.error?.message || data?.detail || text || response.statusText}`);
         const models = (data?.data || data?.models || []).map(x => typeof x === 'string' ? x : x.id).filter(Boolean);
-        const select = $('#hindsight_model').empty().append('<option value="auto">Auto / server-selected</option>');
+        const select = $('#hindsight_model').empty().append('<option value="auto">Auto / provider-selected</option>');
         models.forEach(model => select.append($('<option>').val(model).text(model)));
         if (models.includes(settings().model)) select.val(settings().model); else select.val('auto');
         settings().discoveredModels = models;
         settings().model = select.val();
         saveSettingsDebounced();
-        output.text(models.length ? `${models.length} models found. Note: Hindsight Cloud selects the operation model server-side.` : 'No model catalog exposed; using server-selected model.');
+        output.text(models.length ? `${models.length} provider models found.` : 'No provider model catalog exposed; enter a model manually.');
     } catch (error) {
-        $('#hindsight_model').empty().append('<option value="auto">Auto / server-selected</option>');
-        output.text(`Model discovery unavailable: ${error.message}`);
+        $('#hindsight_model').empty().append('<option value="auto">Auto / provider-selected</option>');
+        output.text(`Provider model discovery unavailable: ${error.message}`);
     }
 }
 
 function loadUi() {
     $('#hindsight_enabled').prop('checked', settings().enabled);
-    $('#hindsight_base_url').val(settings().baseUrl);
-    $('#hindsight_api_key').val(settings().apiKey);
+    $('#hindsight_url').val(settings().hindsightUrl);
+    $('#hindsight_provider_url').val(settings().providerUrl);
+    $('#hindsight_provider_key').val(settings().providerApiKey);
     $('#hindsight_bank_id').val(settings().bankId);
     $('#hindsight_scope').val(settings().scope);
     $('#hindsight_recall_mode').val(settings().recallMode);
@@ -308,8 +321,9 @@ function bindUi() {
     settingsBound = true;
     const save = () => { saveSettingsDebounced(); loadUi(); registerTools(); };
     $('#hindsight_enabled').on('change', function() { settings().enabled = $(this).prop('checked'); save(); });
-    $('#hindsight_base_url').on('change', function() { settings().baseUrl = $(this).val().trim(); save(); });
-    $('#hindsight_api_key').on('change', function() { settings().apiKey = $(this).val().trim(); save(); });
+    $('#hindsight_url').on('change', function() { settings().hindsightUrl = $(this).val().trim().replace(/\/+$/, ''); save(); });
+    $('#hindsight_provider_url').on('change', function() { settings().providerUrl = $(this).val().trim().replace(/\/+$/, ''); save(); });
+    $('#hindsight_provider_key').on('change', function() { settings().providerApiKey = $(this).val().trim(); save(); });
     $('#hindsight_bank_id').on('change', function() { settings().bankId = $(this).val().trim(); save(); });
     $('#hindsight_scope').on('change', function() { settings().scope = $(this).val(); save(); });
     $('#hindsight_recall_mode').on('change', function() { settings().recallMode = $(this).val(); save(); });

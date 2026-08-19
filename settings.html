@@ -11,15 +11,18 @@
         </div>
         <hr>
         <div class="hindsight_section">
-            <label>Hindsight API base URL</label>
-            <input id="hindsight_base_url" class="text_pole" type="text" placeholder="https://api.hindsight.vectorize.io">
-            <label>Hindsight API key</label>
-            <input id="hindsight_api_key" class="text_pole" type="password" placeholder="Stored in ST extension settings">
+            <label>Hindsight backend URL</label>
+            <input id="hindsight_url" class="text_pole" type="text" placeholder="https://your-hindsight.example">
+            <small>The Hindsight service used by this SillyTavern instance. It is not the LLM provider URL.</small>
+            <label>LLM provider base URL</label>
+            <input id="hindsight_provider_url" class="text_pole" type="text" placeholder="https://provider.example/v1">
+            <label>LLM provider API key</label>
+            <input id="hindsight_provider_key" class="text_pole" type="password" placeholder="Stored in ST extension settings">
             <label>Hindsight bank</label>
             <input id="hindsight_bank_id" class="text_pole" type="text" placeholder="sillytavern">
-            <label>Hindsight model</label>
+            <label>LLM model</label>
             <select id="hindsight_model" class="text_pole"></select>
-            <button id="hindsight_discover_models" class="menu_button">Discover models</button>
+            <button id="hindsight_discover_models" class="menu_button">Discover provider models</button>
             <small id="hindsight_model_status"></small>
         </div>
         <hr>
