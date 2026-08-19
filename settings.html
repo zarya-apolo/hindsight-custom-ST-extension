@@ -1,0 +1,52 @@
+<div id="hindsight_settings" class="inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+        <b>Hindsight Memory</b>
+        <div class="status_text">off</div>
+        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down"></div>
+    </div>
+    <div class="inline-drawer-content">
+        <div class="hindsight_section">
+            <label class="checkbox_label"><input id="hindsight_enabled" type="checkbox"> Enabled</label>
+            <small>Automatic recall before each generation and asynchronous retain of the current chat.</small>
+        </div>
+        <hr>
+        <div class="hindsight_section">
+            <label>Hindsight API base URL</label>
+            <input id="hindsight_base_url" class="text_pole" type="text" placeholder="https://api.hindsight.vectorize.io">
+            <label>Hindsight API key</label>
+            <input id="hindsight_api_key" class="text_pole" type="password" placeholder="Stored in ST extension settings">
+            <label>Hindsight bank</label>
+            <input id="hindsight_bank_id" class="text_pole" type="text" placeholder="sillytavern">
+            <label>Hindsight model</label>
+            <select id="hindsight_model" class="text_pole"></select>
+            <button id="hindsight_discover_models" class="menu_button">Discover models</button>
+            <small id="hindsight_model_status"></small>
+        </div>
+        <hr>
+        <div class="hindsight_section">
+            <label>Cross-chat memory scope</label>
+            <select id="hindsight_scope" class="text_pole">
+                <option value="global">Global: memories available across ST chats</option>
+                <option value="character">Character: shared by chats with this character</option>
+                <option value="chat">This chat only</option>
+            </select>
+            <small>Scope is implemented with Hindsight tags. Global memories are untagged; character/chat memories are isolated.</small>
+        </div>
+        <hr>
+        <div class="hindsight_section">
+            <label>Automatic recall</label>
+            <select id="hindsight_recall_mode" class="text_pole">
+                <option value="recall">Recall facts (recommended)</option>
+                <option value="reflect">Reflect synthesis</option>
+                <option value="off">Off</option>
+            </select>
+            <label>Recall budget</label>
+            <select id="hindsight_budget" class="text_pole">
+                <option value="low">Low</option>
+                <option value="mid">Mid</option>
+                <option value="high">High</option>
+            </select>
+        </div>
+        <div id="hindsight_status" class="hindsight_status"></div>
+    </div>
+</div>

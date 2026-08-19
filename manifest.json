@@ -1,0 +1,11 @@
+{
+  "display_name": "Hindsight Memory",
+  "loading_order": 50,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "Mht",
+  "version": "0.1.0",
+  "homePage": "https://github.com/vectorize-io/hindsight"
+}

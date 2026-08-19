@@ -1,0 +1,6 @@
+#hindsight_settings .hindsight_section { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+#hindsight_settings small { opacity: .75; line-height: 1.35; }
+#hindsight_settings .hindsight_status { margin-top: 8px; min-height: 1.4em; }
+#hindsight_settings .hindsight_status.ready { color: var(--success-color, #6c6); }
+#hindsight_settings .hindsight_status.error { color: var(--warning-color, #d88); }
+#hindsight_settings #hindsight_model_status { margin-top: 4px; }
