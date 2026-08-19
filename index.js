@@ -285,7 +285,13 @@ async function discoverModels() {
             headers: { 'Authorization': `Bearer ${settings().providerApiKey}` },
         });
         const text = await response.text();
-        const data = text ? JSON.parse(text) : {};
+        let data = {};
+        try {
+            data = text ? JSON.parse(text) : {};
+        } catch {
+            const preview = String(text || '').replace(/\s+/g, ' ').slice(0, 180);
+            throw new Error(`${response.status}: provider returned non-JSON${preview ? ` (${preview})` : ''}`);
+        }
         if (!response.ok) throw new Error(`${response.status}: ${data?.error?.message || data?.detail || text || response.statusText}`);
         const models = (data?.data || data?.models || []).map(x => typeof x === 'string' ? x : x.id).filter(Boolean);
         const select = $('#hindsight_model').empty().append('<option value="auto">Auto / provider-selected</option>');
@@ -298,6 +304,25 @@ async function discoverModels() {
     } catch (error) {
         $('#hindsight_model').empty().append('<option value="auto">Auto / provider-selected</option>');
         output.text(`Provider model discovery unavailable: ${error.message}`);
+    }
+}
+
+async function testHindsightConnection() {
+    const output = $('#hindsight_connection_status');
+    output.text('Testing Hindsight...');
+    try {
+        const response = await fetch(`${hindsightUrl()}/openapi.json`, { method: 'GET', headers: { Accept: 'application/json' } });
+        const text = await response.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch { throw new Error(`${response.status}: backend returned non-JSON`); }
+        const title = String(data?.info?.title || '').toLowerCase();
+        if (!response.ok) throw new Error(`${response.status}: ${data?.detail || 'request failed'}`);
+        if (!title.includes('hindsight')) throw new Error('endpoint is live but does not identify as Hindsight');
+        output.text(`Hindsight live: ${data.info.title} ${data.info.version || ''}`.trim());
+        status('Hindsight connection OK', 'ready');
+    } catch (error) {
+        output.text(`Hindsight connection failed: ${error.message}`);
+        status('Hindsight connection failed', 'error');
     }
 }
 
@@ -330,6 +355,7 @@ function bindUi() {
     $('#hindsight_budget').on('change', function() { settings().budget = $(this).val(); save(); });
     $('#hindsight_model').on('change', async function() { settings().model = $(this).val(); saveSettingsDebounced(); await saveSelectedModel(); });
     $('#hindsight_discover_models').on('click', discoverModels);
+    $('#hindsight_test_connection').on('click', testHindsightConnection);
 }
 
 async function loadSettingsHtml() {
