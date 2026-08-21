@@ -112,9 +112,12 @@ function conversationText() {
 }
 
 function queryText() {
-    const messages = (Array.isArray(chat) ? chat : []).filter(x => x && !x.is_system).slice(-8);
-    const current = messages.map(messageText).filter(Boolean).join('\n');
-    return current.slice(-MAX_QUERY_CHARS) || 'What durable facts, preferences, relationships, or events are relevant to this conversation?';
+    const messages = (Array.isArray(chat) ? chat : []).filter(x => x && !x.is_system);
+    // Use only the last 1-2 user/character turns for the query so it focuses on the active topic
+    // and stays strictly below Hindsight's 500-token limit (DEFAULT_RECALL_MAX_QUERY_TOKENS = 500).
+    const recent = messages.slice(-2);
+    const text = recent.map(m => String(m.mes || m.content || '').trim()).filter(Boolean).join('\n');
+    return text.slice(0, 1000) || 'What durable facts, preferences, relationships, or events are relevant to this conversation?';
 }
 
 function recallPayload() {
@@ -368,7 +371,6 @@ async function loadSettingsHtml() {
 function onChatChanged() {
     recallGenerationKey = '';
     setExtensionPrompt(MODULE, '', extension_prompt_types.NONE, 0);
-    if (ready()) scheduleRetain();
 }
 function onMessageMutation() { recallGenerationKey = ''; scheduleRetain(); }
 
