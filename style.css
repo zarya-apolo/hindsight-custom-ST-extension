@@ -1,6 +1,15 @@
 #hindsight_settings .hindsight_section { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+#hindsight_settings .hindsight_row { display: flex; gap: 6px; align-items: center; }
+#hindsight_settings .hindsight_row select { flex: 1; }
 #hindsight_settings small { opacity: .75; line-height: 1.35; }
 #hindsight_settings .hindsight_status { margin-top: 8px; min-height: 1.4em; }
 #hindsight_settings .hindsight_status.ready { color: var(--success-color, #6c6); }
 #hindsight_settings .hindsight_status.error { color: var(--warning-color, #d88); }
 #hindsight_settings #hindsight_model_status { margin-top: 4px; }
+#hindsight_settings .hindsight_info_box {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    gap: 4px;
+}

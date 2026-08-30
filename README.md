@@ -1,38 +1,33 @@
 # Hindsight Memory — SillyTavern extension
 
-This is an independent browser-only SillyTavern extension. It does not modify SillyTavern core or the Honcho extension.
+This is an independent browser-only SillyTavern extension. It does not modify SillyTavern core, remote servers, or other extensions.
 
-Features:
+## Features
 
-- Hindsight backend URL, LLM provider URL/key, bank and abstract model selector in the extension menu.
-- Optional model discovery via `GET <provider-url>/models`; the model identifier is provider-agnostic and user-selected.
-- Automatic non-streaming recall before each generation.
-- Asynchronous full-chat retain using one stable Hindsight `document_id` per ST chat.
-- Replaces the Hindsight document after edits, deletes, swipes and regenerated messages are reflected in the current ST chat.
-- Three memory scopes:
-  - Global: untagged memories shared by all ST chats using the bank.
-  - Character: memories tagged for the current character.
-  - This chat only: memories tagged for the current ST chat.
-- LLM tools: `hindsight_recall`, `hindsight_reflect`, `hindsight_retain`.
+- **Memory bank selection modes**:
+  - `Auto`: Resolves one isolated Hindsight bank per SillyTavern conversation (`st-chat-<chat_id>`), identified cleanly in the UI by chat name and ID (with collision-safe hashing if special characters are present).
+  - `Character card`: Resolves one persistent bank whose bank ID is the exact SillyTavern character card name `{{char}}` (including disambiguation suffixes such as `(1)`). Fails safe to per-chat Auto if no card is present (e.g. group chat).
+  - `Custom`: Lists live banks via `GET /v1/default/banks` and lets you select any existing bank (including legacy `sillytavern`).
+- **Segmented transcript documents**:
+  - Automatic transcripts are divided into stable segments (default: 15 non-system chat + character messages per document).
+  - Open segments use `append` for linear growth; segment initializations and mutations (edits, deletions, swipes, regenerations) use isolated `replace` on the affected segment document only.
+  - Managed document deletion: removing messages or truncating chats automatically deletes orphaned automatic segment documents via `DELETE /v1/default/banks/{bank}/documents/{document_id}` without touching any bank.
+  - Global 120,000-character truncation has been removed.
+- **Creation-time threshold**:
+  - Segmentation threshold applies only to newly created and open segments. Past closed segments retain their creation-time threshold.
+- **Explicit LLM memory protection**:
+  - The `hindsight_retain` tool creates independent memory documents (omits `document_id`), keeping explicit memories uncoupled from automatic transcript segmentation.
+- **Independent readiness**:
+  - Backend operations (memory retain/recall/reflect/tools and listing banks) depend only on Hindsight backend URL + Enabled status.
+  - LLM Provider base URL and API key are needed only for discovering provider models and writing provider configurations.
+- **Unified routing & race safety**:
+  - Automatic recall, reflect, LLM tools (`hindsight_recall`, `hindsight_reflect`, `hindsight_retain`), and model settings route through the single active bank resolver.
+  - Pre-fetch and post-fetch race checks prevent outdated responses or cross-chat memory leaks during asynchronous operations.
+- **Live Memory State Indicator**:
+  - Displays active bank, bank mode, total automatic documents, current segment position (`X/Y (N/15 msgs)`), and total indexed messages.
 
-Important scope behavior:
+## Legacy Compatibility & Migration Note
 
-The extension uses Hindsight tags for scoped memories. In `global`, all chat documents are written to the same bank without tags, so memories can be recalled between chats. In `character` and `chat`, recall is filtered with strict tags. This makes cross-chat memory a user decision rather than a permanent yes/no design decision.
-
-Install from the public GitHub repository URL. The extension must be configured with the Hindsight backend URL; it is never hardcoded to an IP.
-
-The provider URL/key/model configure the LLM used by Hindsight. The Hindsight URL configures the memory backend. They are separate services.
-
-Legacy manual install path:
-
-`public/scripts/extensions/third-party/hindsight-custom-ST-extension`
-
-Then restart SillyTavern and configure the extension. Hindsight API calls are intentionally non-streaming. The main ST model stream remains controlled by SillyTavern.
-
-Model selection is persisted per Hindsight bank through Hindsight's custom endpoints:
-
-- `GET /v1/models` lists configured server-side model deployments without credentials.
-- `GET /v1/default/banks/{bank_id}/llm-model` reads the effective selection.
-- `PATCH /v1/default/banks/{bank_id}/llm-model` persists the selection.
-
-The selected bank model is used as Hindsight's default LLM model. Provider, API key, base URL, and explicit per-operation server overrides remain server-owned.
+- Existing banks (such as `sillytavern`) and prior documents are never silently migrated, deleted, or altered.
+- Custom mode allows selecting legacy banks directly.
+- The segmentation threshold setting applies to newly created and currently open automatic documents, not past closed segments.

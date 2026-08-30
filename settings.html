@@ -7,7 +7,7 @@
     <div class="inline-drawer-content">
         <div class="hindsight_section">
             <label class="checkbox_label"><input id="hindsight_enabled" type="checkbox"> Enabled</label>
-            <small>Automatic recall before each generation and asynchronous retain of the current chat.</small>
+            <small>Automatic recall before each generation and asynchronous segmented retain of the current chat.</small>
         </div>
         <hr>
         <div class="hindsight_section">
@@ -20,22 +20,31 @@
             <input id="hindsight_provider_url" class="text_pole" type="text" placeholder="https://provider.example/v1">
             <label>LLM provider API key</label>
             <input id="hindsight_provider_key" class="text_pole" type="password" placeholder="Stored in ST extension settings">
-            <label>Hindsight bank</label>
-            <input id="hindsight_bank_id" class="text_pole" type="text" placeholder="sillytavern">
+
+            <label>Memory bank mode</label>
+            <select id="hindsight_bank_mode" class="text_pole">
+                <option value="auto">Auto (isolated bank per chat)</option>
+                <option value="character">Character card (shared across chats with same card)</option>
+                <option value="custom">Custom (choose existing Hindsight bank)</option>
+            </select>
+
+            <div id="hindsight_custom_bank_container">
+                <label>Custom Hindsight bank</label>
+                <div class="hindsight_row">
+                    <select id="hindsight_custom_bank_select" class="text_pole"></select>
+                    <button id="hindsight_refresh_banks" class="menu_button" title="Refresh banks from Hindsight">Refresh</button>
+                </div>
+                <input id="hindsight_bank_id" class="text_pole" type="text" placeholder="Custom bank ID (e.g. sillytavern)">
+            </div>
+
+            <label>Messages per automatic document</label>
+            <input id="hindsight_messages_per_document" class="text_pole" type="number" min="1" step="1" value="15">
+            <small>Threshold for automatic transcript segmentation (default 15). Applies only to open/future documents.</small>
+
             <label>LLM model</label>
             <select id="hindsight_model" class="text_pole"></select>
             <button id="hindsight_discover_models" class="menu_button">Discover provider models</button>
             <small id="hindsight_model_status"></small>
-        </div>
-        <hr>
-        <div class="hindsight_section">
-            <label>Cross-chat memory scope</label>
-            <select id="hindsight_scope" class="text_pole">
-                <option value="global">Global: memories available across ST chats</option>
-                <option value="character">Character: shared by chats with this character</option>
-                <option value="chat">This chat only</option>
-            </select>
-            <small>Scope is implemented with Hindsight tags. Global memories are untagged; character/chat memories are isolated.</small>
         </div>
         <hr>
         <div class="hindsight_section">
@@ -51,6 +60,14 @@
                 <option value="mid">Mid</option>
                 <option value="high">High</option>
             </select>
+        </div>
+        <hr>
+        <div class="hindsight_section hindsight_info_box">
+            <b>Current Chat Memory State</b>
+            <div id="hindsight_stat_bank">Active bank: -</div>
+            <div id="hindsight_stat_docs">Automatic documents: 0</div>
+            <div id="hindsight_stat_curr_doc">Current document: none</div>
+            <div id="hindsight_stat_total">Indexed total: 0 messages</div>
         </div>
         <div id="hindsight_status" class="hindsight_status"></div>
     </div>

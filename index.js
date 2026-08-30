@@ -5,20 +5,50 @@ import {
     setExtensionPrompt,
     extension_prompt_types,
     getCurrentChatId,
+    getCurrentChatDetails,
     chat_metadata,
     chat,
+    characters,
+    this_chid,
 } from '../../../../script.js';
 import { extension_settings, getContext, saveMetadataDebounced } from '../../../extensions.js';
+import {
+    resolveBankIdentity,
+    buildModelEndpoints,
+    parseBanksResponse,
+    computeSegmentPlan,
+    queryTextForMessages,
+    formatRecall,
+    buildRetainPayload,
+    buildExplicitRetainPayload,
+    buildRecallPayload,
+    buildReflectPayload,
+    formatUiStatus,
+    deriveChatLabel,
+    createChatSnapshot,
+    isSnapshotCurrent,
+    canSaveMetadata,
+    getReadiness,
+    resolveCurrentCharacter,
+    resolveNetworkActionTarget,
+    acknowledgeSegmentAction,
+    isMetadataCompatible,
+    normalizeMetadata,
+} from './core.js';
 
 const MODULE = 'hindsight';
+const METADATA_KEY = 'hindsight_memory';
 const DEFAULTS = {
     enabled: false,
     hindsightUrl: '',
     providerUrl: '',
     providerApiKey: '',
-    bankId: 'sillytavern',
+    bankMode: 'auto', // auto | character | custom
+    bankId: 'sillytavern', // legacy compat
+    customBankId: 'sillytavern',
+    messagesPerDocument: 15,
+    discoveredBanks: [],
     model: 'auto',
-    scope: 'global',
     recallMode: 'recall',
     budget: 'mid',
     maxTokens: 2200,
@@ -26,27 +56,75 @@ const DEFAULTS = {
     injectionDepth: 4,
 };
 const MAX_QUERY_CHARS = 8000;
-const MAX_CONTENT_CHARS = 120000;
 let retainTimer = null;
 let retainInFlight = false;
 let retainQueued = false;
 let recallGenerationKey = '';
 let settingsBound = false;
+let toolsRegistered = false;
 
 const settings = () => extension_settings.hindsight;
 const hindsightUrl = () => String(settings()?.hindsightUrl || '').replace(/\/+$/, '');
 const providerUrl = () => String(settings()?.providerUrl || '').replace(/\/+$/, '');
-const bankId = () => encodeURIComponent(String(settings()?.bankId || 'sillytavern').trim() || 'sillytavern');
-const modelEndpoint = () => `/v1/default/banks/${bankId()}/llm-model`;
-const modelsEndpoint = '/v1/models';
-const providerEndpoint = () => `/v1/default/banks/${bankId()}/llm-provider`;
-const ready = () => Boolean(settings()?.enabled && hindsightUrl() && providerUrl() && settings()?.providerApiKey);
+
+function readiness() {
+    return getReadiness({
+        enabled: settings()?.enabled,
+        hindsightUrl: hindsightUrl(),
+        providerUrl: providerUrl(),
+        providerApiKey: settings()?.providerApiKey,
+    });
+}
+
+function currentChatId() {
+    return String(getCurrentChatId?.() || chat_metadata?.chat_id || getContext()?.chatId || 'current-chat');
+}
+
+function currentChatName() {
+    let details = null;
+    try {
+        if (typeof getCurrentChatDetails === 'function') {
+            details = getCurrentChatDetails();
+        }
+    } catch {
+        // ignore if not available in older ST versions
+    }
+    return deriveChatLabel({
+        chatDetails: details,
+        chatMetadata: chat_metadata,
+        context: getContext(),
+        chatId: currentChatId(),
+    });
+}
+
+function currentCharacter() {
+    return resolveCurrentCharacter({
+        context: getContext(),
+        this_chid,
+        characters,
+    });
+}
+
+function activeBank() {
+    return resolveBankIdentity({
+        bankMode: settings().bankMode,
+        chatId: currentChatId(),
+        chatName: currentChatName(),
+        character: currentCharacter(),
+        customBankId: settings().customBankId || settings().bankId,
+    });
+}
+
+function activeBankId() {
+    return activeBank().bankId;
+}
 
 function status(text, type = '') {
     const el = $('#hindsight_status');
     el.text(text || '');
     el.toggleClass('ready', type === 'ready').toggleClass('error', type === 'error');
-    $('#hindsight_settings .status_text').text(ready() ? 'ready' : 'off');
+    $('#hindsight_settings .status_text').text(readiness().isMemoryReady ? 'ready' : 'off');
+    updateUiState();
 }
 
 function apiHeaders() {
@@ -72,85 +150,87 @@ async function hindsightFetch(path, options = {}, timeout = 90000) {
     }
 }
 
-function sanitize(value, fallback = 'unknown') {
-    const result = String(value || '').trim().replace(/[^a-zA-Z0-9._:-]+/g, '_').replace(/^_+|_+$/g, '');
-    return result || fallback;
+function getMemoryMetadata() {
+    if (!chat_metadata) return null;
+    const meta = chat_metadata[METADATA_KEY];
+    if (meta && typeof meta === 'object' && meta.version === 1) return meta;
+    return null;
 }
 
-function currentChatId() {
-    return String(getCurrentChatId?.() || chat_metadata?.chat_id || 'current-chat');
+function saveMemoryMetadata(metadata, expectedSnapshot = null) {
+    if (!chat_metadata) return false;
+    if (expectedSnapshot) {
+        const currentSnapshot = createChatSnapshot({
+            chatId: currentChatId(),
+            bankId: activeBank().bankId,
+            messages: Array.isArray(chat) ? chat : [],
+        });
+        if (!canSaveMetadata(expectedSnapshot, currentSnapshot)) {
+            console.warn('[Hindsight] Chat changed before metadata save; discarding stale metadata.');
+            return false;
+        }
+    }
+    chat_metadata[METADATA_KEY] = metadata;
+    saveMetadataDebounced?.();
+    updateUiState();
+    return true;
 }
 
-function characterScope() {
-    const context = getContext();
-    const character = context?.name2 || context?.characterName || context?.characters?.[context?.characterId]?.name || 'character';
-    return sanitize(character, 'character');
-}
+function updateUiState() {
+    const bank = activeBank();
+    const meta = getMemoryMetadata();
+    const isCompat = isMetadataCompatible(meta, { bankId: bank.bankId, mode: bank.mode, chatId: currentChatId() });
+    const segments = isCompat ? (meta?.segments || []) : [];
+    const openSeg = segments.find(s => s.status === 'open') || segments[segments.length - 1];
+    const totalMsgs = segments.reduce((sum, s) => sum + (s.messageCount || 0), 0);
+    const currIdx = openSeg ? (segments.indexOf(openSeg) + 1) : segments.length;
+    const activeThreshold = openSeg?.thresholdUsed || settings().messagesPerDocument;
 
-function scopeTags() {
-    const mode = settings().scope;
-    if (mode === 'chat') return [`st:chat:${sanitize(currentChatId())}`];
-    if (mode === 'character') return [`st:character:${characterScope()}`];
-    return [];
-}
+    const stats = formatUiStatus({
+        bankLabel: bank.bankLabel,
+        mode: bank.mode,
+        segmentCount: segments.length,
+        currentSegmentIndex: currIdx,
+        currentSegmentMessages: openSeg?.messageCount || 0,
+        messagesPerDocument: activeThreshold,
+        totalIndexedMessages: totalMsgs,
+    });
 
-function documentId() {
-    return `st-chat:${sanitize(currentChatId())}`;
-}
-
-function messageText(message) {
-    if (!message || message.is_system) return '';
-    const role = message.is_user ? 'User' : (message.name || 'Assistant');
-    const text = String(message.mes || message.content || '').trim();
-    if (!text) return '';
-    const stamp = message.send_date || message.created_at || '';
-    return `${role}${stamp ? ` (${stamp})` : ''}: ${text}`;
-}
-
-function conversationText() {
-    return (Array.isArray(chat) ? chat : []).map(messageText).filter(Boolean).join('\n\n').slice(-MAX_CONTENT_CHARS);
-}
-
-function queryText() {
-    const messages = (Array.isArray(chat) ? chat : []).filter(x => x && !x.is_system);
-    // Use only the last 1-2 user/character turns for the query so it focuses on the active topic
-    // and stays strictly below Hindsight's 500-token limit (DEFAULT_RECALL_MAX_QUERY_TOKENS = 500).
-    const recent = messages.slice(-2);
-    const text = recent.map(m => String(m.mes || m.content || '').trim()).filter(Boolean).join('\n');
-    return text.slice(0, 1000) || 'What durable facts, preferences, relationships, or events are relevant to this conversation?';
-}
-
-function recallPayload() {
-    const payload = {
-        query: queryText(),
-        budget: settings().budget || 'mid',
-        max_tokens: Number(settings().maxTokens) || 2200,
-        types: ['observation', 'world', 'experience'],
-        prefer_observations: true,
-    };
-    const tags = scopeTags();
-    if (tags.length) { payload.tags = tags; payload.tags_match = 'any_strict'; }
-    return payload;
-}
-
-function formatRecall(data) {
-    const results = Array.isArray(data?.results) ? data.results : [];
-    if (!results.length) return '';
-    return results.map(item => `- ${item.text || ''}`).filter(Boolean).join('\n');
+    $('#hindsight_stat_bank').text(stats.activeBankText);
+    $('#hindsight_stat_docs').text(stats.docCountText);
+    $('#hindsight_stat_curr_doc').text(stats.currentDocText);
+    $('#hindsight_stat_total').text(stats.totalIndexedText);
 }
 
 async function automaticRecall() {
-    if (!ready() || settings().recallMode === 'off') return;
-    const key = `${currentChatId()}:${chat?.length || 0}:${queryText().slice(-160)}`;
+    if (!readiness().isMemoryReady || settings().recallMode === 'off') return;
+    const currentChat = Array.isArray(chat) ? chat : [];
+    const query = queryTextForMessages(currentChat);
+    const bank = activeBank();
+    const chatId = currentChatId();
+    const snapshotBefore = createChatSnapshot({ chatId, bankId: bank.bankId, messages: currentChat });
+    const key = `${bank.bankId}:${currentChat.length}:${query.slice(-160)}`;
     if (key === recallGenerationKey) return;
     recallGenerationKey = key;
     try {
-        const path = settings().recallMode === 'reflect'
-            ? `/v1/default/banks/${bankId()}/reflect`
-            : `/v1/default/banks/${bankId()}/memories/recall`;
-        const payload = recallPayload();
-        payload.query = queryText();
+        const endpoints = buildModelEndpoints(bank.bankId);
+        const path = settings().recallMode === 'reflect' ? endpoints.reflect : endpoints.recall;
+        const payload = settings().recallMode === 'reflect'
+            ? buildReflectPayload({ query, budget: settings().budget, maxTokens: settings().maxTokens })
+            : buildRecallPayload({ query, budget: settings().budget, maxTokens: settings().maxTokens });
         const data = await hindsightFetch(path, { method: 'POST', body: JSON.stringify(payload) });
+
+        // Post-fetch race safety check: verify chat/bank/messages didn't switch while waiting
+        const snapshotAfter = createChatSnapshot({
+            chatId: currentChatId(),
+            bankId: activeBank().bankId,
+            messages: Array.isArray(chat) ? chat : [],
+        });
+        if (!isSnapshotCurrent(snapshotBefore, snapshotAfter)) {
+            console.log('[Hindsight] Chat or bank switched during recall fetch; discarding stale recall response.');
+            return;
+        }
+
         const text = settings().recallMode === 'reflect' ? String(data?.text || '') : formatRecall(data);
         const formatted = text.trim() ? `# Hindsight Memory\nUse this relevant long-term memory when answering.\n\n${text.trim()}` : '';
         const position = Number(settings().injectionPosition);
@@ -163,85 +243,168 @@ async function automaticRecall() {
 }
 
 async function retainCurrentChat() {
-    if (!ready()) return;
-    const content = conversationText();
-    if (!content) return;
+    if (!readiness().isMemoryReady) return;
+    const currentChat = Array.isArray(chat) ? chat : [];
+    const existingMeta = getMemoryMetadata();
+    // If chat is empty and there is no compatible metadata to clean up, return early
+    if (!currentChat.length && (!existingMeta || !existingMeta.segments?.length)) return;
     if (retainInFlight) { retainQueued = true; return; }
     retainInFlight = true;
     try {
-        const payload = {
-            items: [{
-                content,
-                document_id: documentId(),
-                update_mode: 'replace',
-                context: 'SillyTavern roleplay/chat conversation',
-                metadata: { source: 'sillytavern-hindsight-extension', chat_id: currentChatId() },
-                tags: scopeTags(),
-            }],
-        };
-        payload.async = true;
-        await hindsightFetch(`/v1/default/banks/${bankId()}/memories`, { method: 'POST', body: JSON.stringify(payload) }, 30000);
-        status('Chat saved to Hindsight', 'ready');
+        const bank = activeBank();
+        const chatId = currentChatId();
+        const snapshot = createChatSnapshot({ chatId, bankId: bank.bankId, messages: currentChat });
+
+        const plan = computeSegmentPlan({
+            messages: currentChat,
+            existingMetadata: existingMeta,
+            chatId,
+            bankId: bank.bankId,
+            bankLabel: bank.bankLabel,
+            mode: bank.mode,
+            identity: bank.identity,
+            messagesPerDocument: settings().messagesPerDocument,
+        });
+
+        if (plan.actions.length > 0) {
+            const endpoints = buildModelEndpoints(bank.bankId);
+            const matchingMeta = isMetadataCompatible(existingMeta, { bankId: bank.bankId, mode: bank.mode, chatId })
+                ? normalizeMetadata(existingMeta)
+                : null;
+
+            let rollingBase = matchingMeta || {
+                version: 1,
+                chatId: plan.metadata.chatId,
+                bankId: plan.metadata.bankId,
+                bankLabel: plan.metadata.bankLabel,
+                mode: plan.metadata.mode,
+                identity: plan.metadata.identity,
+                activeSegmentId: '',
+                totalCount: 0,
+                currentCount: 0,
+                segments: [],
+            };
+            for (const act of plan.actions) {
+                // Pre-fetch race check
+                const activeNow = createChatSnapshot({
+                    chatId: currentChatId(),
+                    bankId: activeBank().bankId,
+                    messages: Array.isArray(chat) ? chat : [],
+                });
+                if (!isSnapshotCurrent(snapshot, activeNow)) {
+                    console.log('[Hindsight] Chat state switched mid-retain before network call; aborting outdated retain.');
+                    return;
+                }
+
+                const target = resolveNetworkActionTarget(endpoints, act);
+                if (act.type === 'delete') {
+                    await hindsightFetch(target.url, { method: target.method }, 30000);
+                } else {
+                    const payload = buildRetainPayload({
+                        messages: act.messages,
+                        documentId: act.documentId,
+                        updateMode: act.type,
+                        chatId,
+                        bankId: bank.bankId,
+                    });
+                    await hindsightFetch(target.url, { method: target.method, body: JSON.stringify(payload) }, 30000);
+                }
+
+                // Immediately acknowledge accepted network action in local rolling metadata to prevent duplicate appends on subsequent retries
+                rollingBase = acknowledgeSegmentAction(rollingBase || plan.metadata, act, currentChat);
+            }
+
+            // Post-network race check before saving metadata
+            const finalState = createChatSnapshot({
+                chatId: currentChatId(),
+                bankId: activeBank().bankId,
+                messages: Array.isArray(chat) ? chat : [],
+            });
+            if (!isSnapshotCurrent(snapshot, finalState)) {
+                console.log('[Hindsight] Chat state changed during retain network operations; discarding stale metadata update.');
+                return;
+            }
+
+            if (!saveMemoryMetadata(rollingBase || plan.metadata, snapshot)) {
+                status('Chat changed before metadata save; retry pending', 'error');
+                return;
+            }
+            status(`Chat saved (${plan.actions.length} seg update)`, 'ready');
+        } else {
+            status('Chat memory up to date', 'ready');
+        }
     } catch (error) {
         console.warn('[Hindsight] retain failed:', error);
         status(`Save failed: ${error.message}`, 'error');
     } finally {
         retainInFlight = false;
-        if (retainQueued) { retainQueued = false; scheduleRetain(); }
+        if (retainQueued) {
+            retainQueued = false;
+            scheduleRetain();
+        }
     }
 }
 
 function scheduleRetain() {
-    if (!ready()) return;
+    if (!readiness().isMemoryReady) return;
     clearTimeout(retainTimer);
     retainTimer = setTimeout(() => retainCurrentChat(), 1200);
 }
 
-function toolScopePayload(payload) {
-    const tags = scopeTags();
-    if (tags.length) { payload.tags = tags; payload.tags_match = 'any_strict'; }
-    return payload;
-}
-
 function registerTools() {
+    if (toolsRegistered) return;
     const context = getContext();
-    const shouldRegister = () => ready();
+    if (!context?.registerFunctionTool) return;
+    toolsRegistered = true;
+    const shouldRegister = () => readiness().isMemoryReady;
+
     context.registerFunctionTool({
         name: 'hindsight_recall', displayName: 'Hindsight: Recall',
         description: 'Search long-term Hindsight memory for relevant facts, events, preferences, relationships, and prior conversation details.',
         parameters: { type: 'object', properties: { query: { type: 'string', description: 'What to search for.' } }, required: ['query'] },
         action: async args => {
-            if (!ready() || !args?.query) return 'Hindsight is not ready or no query was provided.';
+            if (!readiness().isMemoryReady || !args?.query) return 'Hindsight is not ready or no query was provided.';
+            const bank = activeBank();
+            const endpoints = buildModelEndpoints(bank.bankId);
+            const query = String(args.query).slice(0, MAX_QUERY_CHARS);
             const payload = settings().recallMode === 'reflect'
-                ? toolScopePayload({ query: String(args.query).slice(0, MAX_QUERY_CHARS), budget: settings().budget, max_tokens: Number(settings().maxTokens) || 2200 })
-                : toolScopePayload({ query: String(args.query).slice(0, MAX_QUERY_CHARS), budget: settings().budget, max_tokens: Number(settings().maxTokens) || 2200, types: ['observation', 'world', 'experience'], prefer_observations: true });
-            const endpoint = settings().recallMode === 'reflect' ? `/v1/default/banks/${bankId()}/reflect` : `/v1/default/banks/${bankId()}/memories/recall`;
+                ? buildReflectPayload({ query, budget: settings().budget, maxTokens: settings().maxTokens })
+                : buildRecallPayload({ query, budget: settings().budget, maxTokens: settings().maxTokens });
+            const endpoint = settings().recallMode === 'reflect' ? endpoints.reflect : endpoints.recall;
             const data = await hindsightFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) });
             return settings().recallMode === 'reflect' ? (String(data?.text || '') || 'No relevant memories found.') : (formatRecall(data) || 'No relevant memories found.');
         },
         formatMessage: () => 'Hindsight recall...', shouldRegister, stealth: false,
     });
+
     context.registerFunctionTool({
         name: 'hindsight_reflect', displayName: 'Hindsight: Reflect',
         description: 'Synthesize a reasoned answer across Hindsight memories. Use for complex continuity, relationships, contradictions, or multi-memory questions.',
         parameters: { type: 'object', properties: { query: { type: 'string', description: 'The question to synthesize.' } }, required: ['query'] },
         action: async args => {
-            if (!ready() || !args?.query) return 'Hindsight is not ready or no query was provided.';
-            const payload = toolScopePayload({ query: String(args.query).slice(0, MAX_QUERY_CHARS), budget: settings().budget, max_tokens: Number(settings().maxTokens) || 2200 });
-            const data = await hindsightFetch(`/v1/default/banks/${bankId()}/reflect`, { method: 'POST', body: JSON.stringify(payload) }, 120000);
+            if (!readiness().isMemoryReady || !args?.query) return 'Hindsight is not ready or no query was provided.';
+            const bank = activeBank();
+            const endpoints = buildModelEndpoints(bank.bankId);
+            const payload = buildReflectPayload({ query: String(args.query).slice(0, MAX_QUERY_CHARS), budget: settings().budget, maxTokens: settings().maxTokens });
+            const data = await hindsightFetch(endpoints.reflect, { method: 'POST', body: JSON.stringify(payload) }, 90000);
             return String(data?.text || 'No relevant memories found.');
         },
         formatMessage: () => 'Hindsight reflect...', shouldRegister, stealth: false,
     });
+
     context.registerFunctionTool({
         name: 'hindsight_retain', displayName: 'Hindsight: Save Memory',
         description: 'Store an explicit durable fact, preference, decision, or continuity detail in Hindsight long-term memory.',
         parameters: { type: 'object', properties: { content: { type: 'string', description: 'Durable information to store.' }, context: { type: 'string', description: 'Short context label.' } }, required: ['content'] },
         action: async args => {
-            if (!ready() || !args?.content) return 'Hindsight is not ready or no content was provided.';
-            const item = { content: String(args.content).slice(0, MAX_QUERY_CHARS), context: args.context || 'explicit model memory', tags: scopeTags() };
-            const retainPayload = { items: [item], async: true };
-            await hindsightFetch(`/v1/default/banks/${bankId()}/memories`, { method: 'POST', body: JSON.stringify(retainPayload) }, 30000);
+            if (!readiness().isMemoryReady || !args?.content) return 'Hindsight is not ready or no content was provided.';
+            const bank = activeBank();
+            const endpoints = buildModelEndpoints(bank.bankId);
+            const retainPayload = buildExplicitRetainPayload({
+                content: String(args.content).slice(0, MAX_QUERY_CHARS),
+                context: args.context || 'explicit model memory',
+            });
+            await hindsightFetch(endpoints.memories, { method: 'POST', body: JSON.stringify(retainPayload) }, 30000);
             return 'Memory stored successfully.';
         },
         formatMessage: () => 'Hindsight saving to memory...', shouldRegister, stealth: false,
@@ -249,9 +412,10 @@ function registerTools() {
 }
 
 async function loadPersistedModel() {
-    if (!ready()) return;
+    if (!readiness().isBackendReachable) return;
     try {
-        const data = await hindsightFetch(modelEndpoint(), { method: 'GET' }, 30000);
+        const endpoints = buildModelEndpoints(activeBankId());
+        const data = await hindsightFetch(endpoints.model, { method: 'GET' }, 30000);
         if (data?.model) {
             settings().model = data.model;
             $('#hindsight_model').val(data.model);
@@ -265,12 +429,17 @@ async function loadPersistedModel() {
 
 async function saveSelectedModel() {
     const model = settings().model || 'auto';
-    if (model === 'auto' || !ready()) return;
+    if (model === 'auto' || !readiness().isBackendReachable) return;
+    if (!readiness().isProviderReady) {
+        $('#hindsight_model_status').text('Provider base URL and API key required to save model config');
+        return;
+    }
     try {
-        await hindsightFetch(providerEndpoint(), { method: 'PATCH', body: JSON.stringify({
+        const endpoints = buildModelEndpoints(activeBankId());
+        await hindsightFetch(endpoints.provider, { method: 'PATCH', body: JSON.stringify({
             base_url: providerUrl(), api_key: settings().providerApiKey, model, provider: settings().provider || 'openai',
         }) });
-        await hindsightFetch(modelEndpoint(), { method: 'PATCH', body: JSON.stringify({ model }) });
+        await hindsightFetch(endpoints.model, { method: 'PATCH', body: JSON.stringify({ model }) });
         $('#hindsight_model_status').text(`Persisted selection: ${model}`);
         status(`Model selected: ${model}`, 'ready');
     } catch (error) {
@@ -279,8 +448,39 @@ async function saveSelectedModel() {
     }
 }
 
+async function refreshBanks() {
+    if (!readiness().isBackendReachable) {
+        status('Configure backend URL first to list banks', 'error');
+        return;
+    }
+    try {
+        const data = await hindsightFetch('/v1/default/banks?limit=100', { method: 'GET' }, 30000);
+        const banks = parseBanksResponse(data);
+        settings().discoveredBanks = banks;
+        populateCustomBanksSelect(banks);
+        saveSettingsDebounced();
+        status(`Discovered ${banks.length} banks`, 'ready');
+    } catch (error) {
+        console.warn('[Hindsight] failed to list banks:', error);
+        status(`List banks failed: ${error.message}`, 'error');
+    }
+}
+
+function populateCustomBanksSelect(banks) {
+    const select = $('#hindsight_custom_bank_select').empty();
+    select.append($('<option value="">-- Choose existing bank --</option>'));
+    const list = Array.isArray(banks) && banks.length ? banks : (settings().discoveredBanks || []);
+    list.forEach(b => select.append($('<option>').val(b).text(b)));
+    const current = settings().customBankId || settings().bankId || '';
+    if (current) select.val(current);
+}
+
 async function discoverModels() {
     const output = $('#hindsight_model_status');
+    if (!readiness().isProviderReady) {
+        output.text('Provider base URL and API key required to discover models.');
+        return;
+    }
     output.text('Discovering provider models...');
     try {
         const response = await fetch(`${providerUrl()}/models`, {
@@ -323,6 +523,7 @@ async function testHindsightConnection() {
         if (!title.includes('hindsight')) throw new Error('endpoint is live but does not identify as Hindsight');
         output.text(`Hindsight live: ${data.info.title} ${data.info.version || ''}`.trim());
         status('Hindsight connection OK', 'ready');
+        await refreshBanks();
     } catch (error) {
         output.text(`Hindsight connection failed: ${error.message}`);
         status('Hindsight connection failed', 'error');
@@ -334,26 +535,65 @@ function loadUi() {
     $('#hindsight_url').val(settings().hindsightUrl);
     $('#hindsight_provider_url').val(settings().providerUrl);
     $('#hindsight_provider_key').val(settings().providerApiKey);
-    $('#hindsight_bank_id').val(settings().bankId);
-    $('#hindsight_scope').val(settings().scope);
+    $('#hindsight_bank_mode').val(settings().bankMode || 'auto');
+    $('#hindsight_bank_id').val(settings().customBankId || settings().bankId || '');
+    $('#hindsight_messages_per_document').val(settings().messagesPerDocument || 15);
     $('#hindsight_recall_mode').val(settings().recallMode);
     $('#hindsight_budget').val(settings().budget);
+
+    $('#hindsight_custom_bank_container').toggle(settings().bankMode === 'custom');
+    populateCustomBanksSelect(settings().discoveredBanks);
+
     const select = $('#hindsight_model').empty().append('<option value="auto">Auto / server-selected</option>');
     (settings().discoveredModels || []).forEach(model => select.append($('<option>').val(model).text(model)));
     select.val(settings().model || 'auto');
-    status(ready() ? 'Ready' : 'Configure URL and key', ready() ? 'ready' : '');
+    status(readiness().isMemoryReady ? 'Ready' : 'Configure URL and enable', readiness().isMemoryReady ? 'ready' : '');
+    updateUiState();
 }
 
 function bindUi() {
     if (settingsBound) return;
     settingsBound = true;
     const save = () => { saveSettingsDebounced(); loadUi(); registerTools(); };
+
     $('#hindsight_enabled').on('change', function() { settings().enabled = $(this).prop('checked'); save(); });
     $('#hindsight_url').on('change', function() { settings().hindsightUrl = $(this).val().trim().replace(/\/+$/, ''); save(); });
     $('#hindsight_provider_url').on('change', function() { settings().providerUrl = $(this).val().trim().replace(/\/+$/, ''); save(); });
     $('#hindsight_provider_key').on('change', function() { settings().providerApiKey = $(this).val().trim(); save(); });
-    $('#hindsight_bank_id').on('change', function() { settings().bankId = $(this).val().trim(); save(); });
-    $('#hindsight_scope').on('change', function() { settings().scope = $(this).val(); save(); });
+
+    $('#hindsight_bank_mode').on('change', function() {
+        settings().bankMode = $(this).val();
+        $('#hindsight_custom_bank_container').toggle(settings().bankMode === 'custom');
+        recallGenerationKey = '';
+        save();
+    });
+
+    $('#hindsight_custom_bank_select').on('change', function() {
+        const val = $(this).val();
+        if (val) {
+            settings().customBankId = val;
+            settings().bankId = val;
+            $('#hindsight_bank_id').val(val);
+            recallGenerationKey = '';
+            save();
+        }
+    });
+
+    $('#hindsight_bank_id').on('change', function() {
+        const val = $(this).val().trim();
+        settings().customBankId = val;
+        settings().bankId = val;
+        recallGenerationKey = '';
+        save();
+    });
+
+    $('#hindsight_messages_per_document').on('change', function() {
+        const num = Math.max(1, parseInt($(this).val(), 10) || 15);
+        settings().messagesPerDocument = num;
+        save();
+    });
+
+    $('#hindsight_refresh_banks').on('click', refreshBanks);
     $('#hindsight_recall_mode').on('change', function() { settings().recallMode = $(this).val(); save(); });
     $('#hindsight_budget').on('change', function() { settings().budget = $(this).val(); save(); });
     $('#hindsight_model').on('change', async function() { settings().model = $(this).val(); saveSettingsDebounced(); await saveSelectedModel(); });
@@ -371,13 +611,20 @@ async function loadSettingsHtml() {
 function onChatChanged() {
     recallGenerationKey = '';
     setExtensionPrompt(MODULE, '', extension_prompt_types.NONE, 0);
+    updateUiState();
 }
-function onMessageMutation() { recallGenerationKey = ''; scheduleRetain(); }
+
+function onMessageMutation() {
+    recallGenerationKey = '';
+    scheduleRetain();
+}
 
 jQuery(async () => {
     extension_settings.hindsight = Object.assign({}, DEFAULTS, extension_settings.hindsight || {});
     $('#extensions_settings2').append(await loadSettingsHtml());
-    loadUi(); bindUi(); registerTools();
+    loadUi();
+    bindUi();
+    registerTools();
     await loadPersistedModel();
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, automaticRecall);
@@ -387,5 +634,5 @@ jQuery(async () => {
     if (event_types.MESSAGE_UPDATED) eventSource.on(event_types.MESSAGE_UPDATED, onMessageMutation);
     if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, onMessageMutation);
     eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onMessageMutation);
-    console.log('[Hindsight] extension loaded');
+    console.log('[Hindsight] extension loaded (bank-mode + segmented-doc enabled)');
 });
