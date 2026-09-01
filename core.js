@@ -200,7 +200,7 @@ export function segmentFingerprint(messages) {
 
 export function partitionMessages(messages, threshold = 15) {
     const limit = Math.max(1, Number(threshold) || 15);
-    const nonSystem = (Array.isArray(messages) ? messages : []).filter(m => m && !m.is_system && !m.is_hidden);
+    const nonSystem = (Array.isArray(messages) ? messages : []).filter(m => m && !m.is_system && !m.is_hidden && m.mes !== 'tool_call');
     const segments = [];
     for (let i = 0; i < nonSystem.length; i += limit) {
         segments.push(nonSystem.slice(i, i + limit));
@@ -458,7 +458,7 @@ export function acknowledgeSegmentAction(metadata, action, fullMessages) {
 }
 
 export function createChatSnapshot({ chatId, bankId, messages = [] }) {
-    const nonSystem = (Array.isArray(messages) ? messages : []).filter(m => m && !m.is_system && !m.is_hidden);
+    const nonSystem = (Array.isArray(messages) ? messages : []).filter(m => m && !m.is_system && !m.is_hidden && m.mes !== 'tool_call');
     return {
         chatId: String(chatId || ''),
         bankId: String(bankId || ''),
@@ -493,7 +493,7 @@ export function computeSegmentPlan({
     const defaultThreshold = Math.max(1, Number(messagesPerDocument) || 15);
     const resolvedChatId = chatId || existingMetadata?.chatId || 'chat';
     const safeChatId = sanitizeBankId(resolvedChatId, 'chat');
-    const nonSystem = (Array.isArray(messages) ? messages : []).filter(m => m && !m.is_system && !m.is_hidden);
+    const nonSystem = (Array.isArray(messages) ? messages : []).filter(m => m && !m.is_system && !m.is_hidden && m.mes !== 'tool_call');
 
     const resolvedBankId = bankId || existingMetadata?.bankId || `st-chat-${safeChatId}`;
     const resolvedMode = mode || existingMetadata?.mode || 'auto';
