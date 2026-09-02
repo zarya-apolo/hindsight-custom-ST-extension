@@ -97,6 +97,7 @@ export function buildModelEndpoints(bankId) {
     const encoded = encodeURIComponent(String(bankId || 'sillytavern').trim());
     return {
         model: `/v1/default/banks/${encoded}/llm-model`,
+        reflectModel: `/v1/default/banks/${encoded}/reflect-llm-model`,
         provider: `/v1/default/banks/${encoded}/llm-provider`,
         memories: `/v1/default/banks/${encoded}/memories`,
         recall: `/v1/default/banks/${encoded}/memories/recall`,

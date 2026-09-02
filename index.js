@@ -49,6 +49,7 @@ const DEFAULTS = {
     messagesPerDocument: 15,
     discoveredBanks: [],
     model: 'auto',
+    reflectModel: 'auto',
     recallMode: 'recall',
     budget: 'mid',
     maxTokens: 2200,
@@ -422,8 +423,13 @@ async function loadPersistedModel() {
             $('#hindsight_model_status').text(`Persisted selection: ${data.model} (${data.source || 'server'})`);
             saveSettingsDebounced();
         }
-    } catch (error) {
-        console.warn('[Hindsight] model preference load failed:', error);
+        const reflectData = await hindsightFetch(endpoints.reflectModel, { method: 'GET' }, 30000);
+        if (reflectData?.model) {
+            settings().reflectModel = reflectData.model;
+            $('#hindsight_reflect_model').val(reflectData.model);
+            $('#hindsight_reflect_model_status').text(`Persisted selection: ${reflectData.model} (${reflectData.source || 'server'})`);
+            saveSettingsDebounced();
+        }
     }
 }
 
@@ -445,6 +451,20 @@ async function saveSelectedModel() {
     } catch (error) {
         console.warn('[Hindsight] model preference save failed:', error);
         $('#hindsight_model_status').text(`Model save failed: ${error.message}`);
+    }
+}
+
+async function saveSelectedReflectModel() {
+    const model = settings().reflectModel || 'auto';
+    if (model === 'auto' || !readiness().isBackendReachable) return;
+    try {
+        const endpoints = buildModelEndpoints(activeBankId());
+        await hindsightFetch(endpoints.reflectModel, { method: 'PATCH', body: JSON.stringify({ model }) });
+        $('#hindsight_reflect_model_status').text(`Persisted selection: ${model}`);
+        status(`Reflect model selected: ${model}`, 'ready');
+    } catch (error) {
+        console.warn('[Hindsight] reflect model preference save failed:', error);
+        $('#hindsight_reflect_model_status').text(`Reflect model save failed: ${error.message}`);
     }
 }
 
@@ -547,6 +567,9 @@ function loadUi() {
     const select = $('#hindsight_model').empty().append('<option value="auto">Auto / server-selected</option>');
     (settings().discoveredModels || []).forEach(model => select.append($('<option>').val(model).text(model)));
     select.val(settings().model || 'auto');
+    const reflectSelect = $('#hindsight_reflect_model').empty().append('<option value="auto">Bank general model</option>');
+    (settings().discoveredModels || []).forEach(model => reflectSelect.append($('<option>').val(model).text(model)));
+    reflectSelect.val(settings().reflectModel || 'auto');
     status(readiness().isMemoryReady ? 'Ready' : 'Configure URL and enable', readiness().isMemoryReady ? 'ready' : '');
     updateUiState();
 }
@@ -597,6 +620,7 @@ function bindUi() {
     $('#hindsight_recall_mode').on('change', function() { settings().recallMode = $(this).val(); save(); });
     $('#hindsight_budget').on('change', function() { settings().budget = $(this).val(); save(); });
     $('#hindsight_model').on('change', async function() { settings().model = $(this).val(); saveSettingsDebounced(); await saveSelectedModel(); });
+    $('#hindsight_reflect_model').on('change', async function() { settings().reflectModel = $(this).val(); saveSettingsDebounced(); await saveSelectedReflectModel(); });
     $('#hindsight_discover_models').on('click', discoverModels);
     $('#hindsight_test_connection').on('click', testHindsightConnection);
 }

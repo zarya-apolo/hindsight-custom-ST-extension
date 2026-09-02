@@ -96,6 +96,7 @@ test('Identity & Bank Routing: Custom mode uses exact chosen bank without corrup
 
     const endpoints = buildModelEndpoints(custom.bankId);
     assert.equal(endpoints.model, '/v1/default/banks/sillytavern%2Fv1%3Aspecial/llm-model');
+    assert.equal(endpoints.reflectModel, '/v1/default/banks/sillytavern%2Fv1%3Aspecial/reflect-llm-model');
     assert.equal(endpoints.provider, '/v1/default/banks/sillytavern%2Fv1%3Aspecial/llm-provider');
     assert.equal(endpoints.document('st-chat:chat1:segment:1'), '/v1/default/banks/sillytavern%2Fv1%3Aspecial/documents/st-chat%3Achat1%3Asegment%3A1');
 });
