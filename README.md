@@ -10,7 +10,8 @@ This is an independent browser-only SillyTavern extension. It does not modify Si
   - `Custom`: Lists live banks via `GET /v1/default/banks` and lets you select any existing bank (including legacy `sillytavern`).
 - **Segmented transcript documents**:
   - Automatic transcripts are divided into stable segments (default: 15 non-system chat + character messages per document).
-  - Open segments use `append` for linear growth; segment initializations and mutations (edits, deletions, swipes, regenerations) use isolated `replace` on the affected segment document only.
+  - The current open segment is a local buffer. It is not sent to Hindsight until the conversation advances into the next segment, so edits, deletions, swipes, and regenerations in the current block do not trigger network requests.
+  - Closed segments are sent as complete documents. Mutations to an already-sent segment use an isolated `replace` on that document only.
   - Managed document deletion: removing messages or truncating chats automatically deletes orphaned automatic segment documents via `DELETE /v1/default/banks/{bank}/documents/{document_id}` without touching any bank.
   - Global 120,000-character truncation has been removed.
 - **Creation-time threshold**:
@@ -24,10 +25,10 @@ This is an independent browser-only SillyTavern extension. It does not modify Si
   - Automatic recall, reflect, LLM tools (`hindsight_recall`, `hindsight_reflect`, `hindsight_retain`), and model settings route through the single active bank resolver.
   - Pre-fetch and post-fetch race checks prevent outdated responses or cross-chat memory leaks during asynchronous operations.
 - **Live Memory State Indicator**:
-  - Displays active bank, bank mode, total automatic documents, current segment position (`X/Y (N/15 msgs)`), and total indexed messages.
+  - Displays active bank, bank mode, automatic segments including the local buffer, current segment position (`X/Y (N/15 msgs)`), and total tracked messages.
 
 ## Legacy Compatibility & Migration Note
 
 - Existing banks (such as `sillytavern`) and prior documents are never silently migrated, deleted, or altered.
 - Custom mode allows selecting legacy banks directly.
-- The segmentation threshold setting applies to newly created and currently open automatic documents, not past closed segments.
+- The segmentation threshold setting applies to newly created and currently open automatic documents, not past closed segments. The current open segment is buffered locally until the next segment begins.

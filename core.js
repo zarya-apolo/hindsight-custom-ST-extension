@@ -549,15 +549,19 @@ export function computeSegmentPlan({
         const segId = oldSeg.id;
         const docId = oldSeg.documentId || `st-chat:${safeChatId}:segment:${segId}`;
         const isLast = (i === oldSegments.length - 1) && (curIdx >= nonSystem.length);
-        const isClosed = oldSeg.status === 'closed' ? (group.length >= segThreshold || !isLast) : (group.length >= segThreshold);
+        const isClosed = oldSeg.status === 'open' ? !isLast : (group.length >= segThreshold || !isLast);
         const status = isClosed ? 'closed' : 'open';
 
-        if (currentFp !== oldSeg.fingerprint) {
+        if (currentFp !== oldSeg.fingerprint || status !== oldSeg.status) {
             const wasOpen = oldSeg.status === 'open';
             const isLonger = group.length > (oldSeg.messageCount || 0);
             const prefixMatched = oldSeg.fingerprint && currentFp.startsWith(oldSeg.fingerprint);
 
-            if (wasOpen && isLonger && prefixMatched) {
+            // The open segment is a local buffer. Do not send its incremental
+            // changes while it is still the last segment in the conversation.
+            if (isLast && !isClosed) {
+                // Metadata below keeps the current buffer available locally.
+            } else if (wasOpen && isLonger && prefixMatched && status === 'open') {
                 actions.push({
                     type: 'append',
                     segmentId: segId,
@@ -614,7 +618,10 @@ export function computeSegmentPlan({
 
         partitioned.forEach((group, idx) => {
             const isLast = (idx === partitioned.length - 1);
-            const status = (isLast && group.length < defaultThreshold) ? 'open' : 'closed';
+            // A full block remains buffered until the conversation advances
+            // into the next block. This prevents append/consolidate spam on
+            // the block the user is still reviewing or editing.
+            const status = isLast ? 'open' : 'closed';
             const groupStart = curIdx;
             const msgKeys = nonSystemKeys.slice(groupStart, groupStart + group.length);
             curIdx += group.length;
@@ -624,22 +631,24 @@ export function computeSegmentPlan({
             const segId = typeof idGenerator === 'function' ? idGenerator(resolvedChatId, anchorKey, newSegments.length) : generateSegmentId(resolvedChatId, anchorKey, newSegments.length);
             const docId = `st-chat:${safeChatId}:segment:${segId}`;
 
-            actions.push({
-                type: 'replace',
-                segmentId: segId,
-                documentId: docId,
-                messages: group,
-                segmentMetadata: {
-                    id: segId,
+            if (status === 'closed') {
+                actions.push({
+                    type: 'replace',
+                    segmentId: segId,
                     documentId: docId,
-                    status,
-                    thresholdUsed: defaultThreshold,
-                    messageCount: group.length,
-                    messageIds: msgKeys,
-                    fingerprints: fps,
-                    fingerprint: currentFp,
-                },
-            });
+                    messages: group,
+                    segmentMetadata: {
+                        id: segId,
+                        documentId: docId,
+                        status,
+                        thresholdUsed: defaultThreshold,
+                        messageCount: group.length,
+                        messageIds: msgKeys,
+                        fingerprints: fps,
+                        fingerprint: currentFp,
+                    },
+                });
+            }
 
             newSegments.push({
                 id: segId,

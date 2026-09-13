@@ -128,7 +128,7 @@ test('Segmentation & Retention: computeSegmentPlan handles initial, append, and 
     const makeMsg = (id, text) => ({ mesId: id, is_user: true, mes: text });
     const msgs15 = Array.from({ length: 15 }, (_, i) => makeMsg(`m${i}`, `Text ${i}`));
     
-    // 1. Initial 15 messages -> 1 closed segment, replace mode
+    // 1. Initial 15 messages -> 1 open local buffer, no network action
     const plan1 = computeSegmentPlan({
         messages: msgs15,
         existingMetadata: null,
@@ -140,14 +140,10 @@ test('Segmentation & Retention: computeSegmentPlan handles initial, append, and 
     });
     assert.equal(plan1.segments.length, 1);
     assert.equal(plan1.segments[0].id, 'test-seg-1');
-    assert.equal(plan1.segments[0].status, 'closed');
-    assert.equal(plan1.actions.length, 1);
-    assert.equal(plan1.actions[0].type, 'replace');
-    assert.equal(plan1.actions[0].segmentId, 'test-seg-1');
-    assert.equal(plan1.actions[0].documentId, 'st-chat:chat_1:segment:test-seg-1');
-    assert.equal(plan1.actions[0].messages.length, 15);
+    assert.equal(plan1.segments[0].status, 'open');
+    assert.equal(plan1.actions.length, 0);
 
-    // 2. Add 16th message -> creates 2nd segment (open, 1 msg), replace mode for new segment
+    // 2. Add 16th message -> publishes block 1 and keeps block 2 buffered
     const msgs16 = [...msgs15, makeMsg('m15', 'Text 15')];
     const plan2 = computeSegmentPlan({
         messages: msgs16,
@@ -165,11 +161,10 @@ test('Segmentation & Retention: computeSegmentPlan handles initial, append, and 
     assert.equal(plan2.segments[1].status, 'open');
     assert.equal(plan2.actions.length, 1);
     assert.equal(plan2.actions[0].type, 'replace');
-    assert.equal(plan2.actions[0].segmentId, 'test-seg-2');
-    assert.equal(plan2.actions[0].documentId, 'st-chat:chat_1:segment:test-seg-2');
-    assert.equal(plan2.actions[0].messages.length, 1);
+    assert.equal(plan2.actions[0].segmentId, 'test-seg-1');
+    assert.equal(plan2.actions[0].messages.length, 15);
 
-    // 3. Add 17th message linearly -> appends only new message to open 2nd segment
+    // 3. Add 17th message linearly -> extends only the local buffer
     const msgs17 = [...msgs16, makeMsg('m16', 'Text 16')];
     const plan3 = computeSegmentPlan({
         messages: msgs17,
@@ -183,12 +178,8 @@ test('Segmentation & Retention: computeSegmentPlan handles initial, append, and 
     assert.equal(plan3.segments.length, 2);
     assert.equal(plan3.segments[0].id, 'test-seg-1');
     assert.equal(plan3.segments[1].id, 'test-seg-2');
-    assert.equal(plan3.actions.length, 1);
-    assert.equal(plan3.actions[0].type, 'append');
-    assert.equal(plan3.actions[0].segmentId, 'test-seg-2');
-    assert.equal(plan3.actions[0].documentId, 'st-chat:chat_1:segment:test-seg-2');
-    assert.equal(plan3.actions[0].messages.length, 1);
-    assert.equal(plan3.actions[0].messages[0].mesId, 'm16');
+    assert.equal(plan3.actions.length, 0);
+    assert.equal(plan3.segments[1].messageCount, 2);
 
     // 4. Mutation in segment 1 (e.g. edit message m2) -> only segment 1 is replaced, segment 2 is untouched
     const msgs17Edited = msgs17.map(m => m.mesId === 'm2' ? { ...m, mes: 'Edited text 2' } : m);
@@ -216,7 +207,7 @@ test('Stable segment IDs: message deletion in segment 1 does not rename segment 
     const testIdGen = () => `seg-uuid-${idSeq++}`;
     const makeMsg = (id, text) => ({ mesId: id, is_user: true, mes: text });
     
-    // 30 messages -> 2 closed segments of 15 each
+    // 30 messages -> one published segment and one local buffer
     const msgs30 = Array.from({ length: 30 }, (_, i) => makeMsg(`m${i}`, `Text ${i}`));
     const plan1 = computeSegmentPlan({
         messages: msgs30,
@@ -252,7 +243,7 @@ test('Stable segment IDs: message deletion in segment 1 does not rename segment 
     // Segment 2 MUST keep its ID and MUST NOT be renamed or shifted
     assert.equal(plan2.segments[1].id, seg2Id);
     assert.equal(plan2.segments[1].documentId, seg2DocId);
-    // Only segment 1 needs replacement, segment 2 is completely unchanged
+    // The published segment is replaced; the resized open buffer remains local.
     assert.equal(plan2.actions.length, 1);
     assert.equal(plan2.actions[0].type, 'replace');
     assert.equal(plan2.actions[0].segmentId, seg1Id);
@@ -542,7 +533,7 @@ test('Real-ST identity & timestamps: 30 messages without mesId/id preserve segme
     assert.equal(plan2.segments[0].id, seg1Id);
     assert.equal(plan2.segments[1].id, seg2Id);
     assert.equal(plan2.segments[1].documentId, seg2DocId);
-    // Actions should only replace segment 1
+    // Only the published segment is replaced; the open buffer remains local.
     assert.equal(plan2.actions.length, 1);
     assert.equal(plan2.actions[0].type, 'replace');
     assert.equal(plan2.actions[0].segmentId, seg1Id);
@@ -636,7 +627,7 @@ test('Threshold is creation-time, not retroactive', () => {
         messagesPerDocument: 5,
     });
     assert.equal(plan15.segments.length, 1);
-    assert.equal(plan15.segments[0].status, 'closed');
+    assert.equal(plan15.segments[0].status, 'open');
     assert.equal(plan15.segments[0].thresholdUsed, 15);
 
     // 16th message creates segment 2 with the NEW threshold (5)
@@ -776,7 +767,7 @@ test('Async append retry duplication: acknowledgeSegmentAction models safe state
     assert.equal(planInitial.segments.length, 2);
     assert.equal(planInitial.segments[1].messageCount, 1);
 
-    // Plan for 17 messages -> emits append for m16 on segment 2
+    // Plan for 17 messages -> the open segment remains local
     const planNext = computeSegmentPlan({
         messages: msgs17,
         existingMetadata: planInitial.metadata,
@@ -786,11 +777,10 @@ test('Async append retry duplication: acknowledgeSegmentAction models safe state
         messagesPerDocument: 15,
         idGenerator: (c, k, i) => `seg_${i + 1}`,
     });
-    assert.equal(planNext.actions.length, 1);
-    assert.equal(planNext.actions[0].type, 'append');
+    assert.equal(planNext.actions.length, 0);
 
-    // Acknowledge the append action successfully
-    const ackedMeta = acknowledgeSegmentAction(planInitial.metadata, planNext.actions[0], msgs17);
+    // The pending buffer is already represented in local metadata.
+    const ackedMeta = planNext.metadata;
     assert.equal(ackedMeta.segments[1].messageCount, 2);
     assert.deepEqual(ackedMeta.segments[1].messageIds, ['m15', 'm16']);
 
@@ -836,16 +826,14 @@ test('Multi-segment initial chat acknowledgement: 31 messages with multiple repl
     });
 
     assert.equal(plan.segments.length, 3);
-    assert.equal(plan.actions.length, 3);
+    assert.equal(plan.actions.length, 2);
     assert.equal(plan.actions[0].type, 'replace');
     assert.equal(plan.actions[1].type, 'replace');
-    assert.equal(plan.actions[2].type, 'replace');
+    // The third segment is a local buffer and has no network action.
+    assert.equal(plan.segments[2].status, 'open');
 
-    // Simulate stepping through retainCurrentChat: rollingMeta starts null (no prior meta)
-    let rollingMeta = null;
-    for (const act of plan.actions) {
-        rollingMeta = acknowledgeSegmentAction(rollingMeta, act, msgs31);
-    }
+    // The final local metadata contains both published blocks and the buffer.
+    const rollingMeta = plan.metadata;
 
     assert.equal(rollingMeta.segments.length, 3);
     assert.equal(rollingMeta.totalCount, 31);
@@ -858,7 +846,7 @@ test('Multi-segment initial chat acknowledgement: 31 messages with multiple repl
     assert.deepEqual(rollingMeta.segments[1].messageIds, expectedKeys.slice(15, 30));
     assert.deepEqual(rollingMeta.segments[2].messageIds, expectedKeys.slice(30, 31));
 
-    // Verify subsequent growth (32nd message) produces an append ONLY on segment 3
+    // Verify subsequent growth (32nd message) stays inside the local buffer
     const msgs32 = [...msgs31, {
         send_date: '2026-08-30 10:32:00',
         is_user: true,
@@ -876,18 +864,15 @@ test('Multi-segment initial chat acknowledgement: 31 messages with multiple repl
     });
 
     assert.equal(nextPlan.segments.length, 3);
-    assert.equal(nextPlan.actions.length, 1);
-    assert.equal(nextPlan.actions[0].type, 'append');
-    assert.equal(nextPlan.actions[0].segmentId, 'seg_3');
-    assert.equal(nextPlan.actions[0].messages.length, 1);
-    assert.equal(nextPlan.actions[0].messages[0].mes, 'Message 31 (32nd)');
+    assert.equal(nextPlan.actions.length, 0);
+    assert.equal(nextPlan.segments[2].messageCount, 2);
 });
 
 test('Partial acknowledgement & truncation: acknowledges step-by-step maintaining correct counters and untouched segments', () => {
     const makeMsg = (id, text) => ({ mesId: id, is_user: true, mes: text });
     const msgs30 = Array.from({ length: 30 }, (_, i) => makeMsg(`m${i}`, `Text ${i}`));
     
-    // Initial 30 messages (2 segments of 15)
+    // Initial 30 messages (one published segment and one local buffer)
     const plan = computeSegmentPlan({
         messages: msgs30,
         existingMetadata: null,
@@ -898,7 +883,7 @@ test('Partial acknowledgement & truncation: acknowledges step-by-step maintainin
         idGenerator: (c, k, i) => `seg_${i + 1}`,
     });
 
-    assert.equal(plan.actions.length, 2);
+    assert.equal(plan.actions.length, 1);
     // Acknowledge only segment 1
     const metaStep1 = acknowledgeSegmentAction(null, plan.actions[0], msgs30);
     assert.equal(metaStep1.segments.length, 1);
@@ -906,8 +891,7 @@ test('Partial acknowledgement & truncation: acknowledges step-by-step maintainin
     assert.equal(metaStep1.currentCount, 15);
     assert.equal(metaStep1.activeSegmentId, 'seg_1');
 
-    // Acknowledge segment 2
-    const metaStep2 = acknowledgeSegmentAction(metaStep1, plan.actions[1], msgs30);
+    const metaStep2 = { ...plan.metadata };
     assert.equal(metaStep2.segments.length, 2);
     assert.equal(metaStep2.totalCount, 30);
     assert.equal(metaStep2.currentCount, 15);

@@ -326,13 +326,19 @@ async function retainCurrentChat() {
                 return;
             }
 
-            if (!saveMemoryMetadata(rollingBase || plan.metadata, snapshot)) {
+            if (!saveMemoryMetadata(plan.metadata, snapshot)) {
                 status('Chat changed before metadata save; retry pending', 'error');
                 return;
             }
             status(`Chat saved (${plan.actions.length} seg update)`, 'ready');
         } else {
-            status('Chat memory up to date', 'ready');
+            // Persist pending buffer metadata even when no Hindsight request
+            // was needed. This keeps segment boundaries stable across reloads.
+            if (!saveMemoryMetadata(plan.metadata, snapshot)) {
+                status('Chat changed before metadata save; retry pending', 'error');
+                return;
+            }
+            status('Chat buffered locally', 'ready');
         }
     } catch (error) {
         console.warn('[Hindsight] retain failed:', error);
