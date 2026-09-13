@@ -34,6 +34,9 @@ import {
     acknowledgeSegmentAction,
     isMetadataCompatible,
     normalizeMetadata,
+    parseDocumentsResponse,
+    forceClosedSegmentActions,
+    buildChatDocumentTags,
 } from './core.js';
 
 const MODULE = 'hindsight';
@@ -184,6 +187,7 @@ function updateUiState() {
     const segments = isCompat ? (meta?.segments || []) : [];
     const openSeg = segments.find(s => s.status === 'open') || segments[segments.length - 1];
     const totalMsgs = segments.reduce((sum, s) => sum + (s.messageCount || 0), 0);
+    const publishedDocs = segments.filter(s => s.status === 'closed').length;
     const currIdx = openSeg ? (segments.indexOf(openSeg) + 1) : segments.length;
     const activeThreshold = openSeg?.thresholdUsed || settings().messagesPerDocument;
 
@@ -191,6 +195,7 @@ function updateUiState() {
         bankLabel: bank.bankLabel,
         mode: bank.mode,
         segmentCount: segments.length,
+        publishedSegmentCount: publishedDocs,
         currentSegmentIndex: currIdx,
         currentSegmentMessages: openSeg?.messageCount || 0,
         messagesPerDocument: activeThreshold,
@@ -201,6 +206,74 @@ function updateUiState() {
     $('#hindsight_stat_docs').text(stats.docCountText);
     $('#hindsight_stat_curr_doc').text(stats.currentDocText);
     $('#hindsight_stat_total').text(stats.totalIndexedText);
+}
+
+async function syncCompletedBlocks() {
+    if (!readiness().isMemoryReady) {
+        status('Enable Hindsight and configure its URL first', 'error');
+        return;
+    }
+    if (retainInFlight) {
+        status('A memory operation is already running', 'error');
+        return;
+    }
+    retainInFlight = true;
+    try {
+        const currentChat = Array.isArray(chat) ? chat : [];
+        const bank = activeBank();
+        const chatId = currentChatId();
+        const snapshot = createChatSnapshot({ chatId, bankId: bank.bankId, messages: currentChat });
+        const plan = computeSegmentPlan({
+            messages: currentChat,
+            existingMetadata: getMemoryMetadata(),
+            chatId,
+            bankId: bank.bankId,
+            bankLabel: bank.bankLabel,
+            mode: bank.mode,
+            identity: bank.identity,
+            messagesPerDocument: settings().messagesPerDocument,
+        });
+        const actions = forceClosedSegmentActions(plan, currentChat);
+        const endpoints = buildModelEndpoints(bank.bankId);
+        for (const action of actions) {
+            const activeNow = createChatSnapshot({ chatId: currentChatId(), bankId: activeBank().bankId, messages: Array.isArray(chat) ? chat : [] });
+            if (!isSnapshotCurrent(snapshot, activeNow)) throw new Error('Chat changed during manual synchronization');
+            await hindsightFetch(endpoints.memories, {
+                method: 'POST',
+                body: JSON.stringify(buildRetainPayload({
+                    messages: action.messages,
+                    documentId: action.documentId,
+                    updateMode: 'replace',
+                    chatId,
+                    bankId: bank.bankId,
+                    tags: buildChatDocumentTags({ chatId, segmentId: action.segmentId }),
+                })),
+            }, 30000);
+        }
+        if (!saveMemoryMetadata(plan.metadata, snapshot)) throw new Error('Chat changed before metadata save');
+        status(actions.length ? `Synchronized ${actions.length} completed block(s)` : 'No completed blocks to synchronize', 'ready');
+    } catch (error) {
+        console.warn('[Hindsight] manual sync failed:', error);
+        status(`Manual sync failed: ${error.message}`, 'error');
+    } finally {
+        retainInFlight = false;
+    }
+}
+
+async function inspectHindsightDocuments() {
+    if (!readiness().isBackendReachable) {
+        status('Configure backend URL first to inspect documents', 'error');
+        return;
+    }
+    try {
+        const bank = activeBank();
+        const data = await hindsightFetch(`${buildModelEndpoints(bank.bankId).documents}?limit=100`, { method: 'GET' }, 30000);
+        const documents = parseDocumentsResponse(data);
+        const managed = documents.filter(document => document.tags.includes('source:sillytavern') || document.metadata?.source === 'sillytavern-hindsight-extension');
+        status(`Hindsight has ${documents.length} document(s); ${managed.length} managed by this extension`, 'ready');
+    } catch (error) {
+        status(`Document inspection failed: ${error.message}`, 'error');
+    }
 }
 
 async function automaticRecall() {
@@ -625,6 +698,8 @@ function bindUi() {
     });
 
     $('#hindsight_refresh_banks').on('click', refreshBanks);
+    $('#hindsight_sync_completed').on('click', syncCompletedBlocks);
+    $('#hindsight_inspect_documents').on('click', inspectHindsightDocuments);
     $('#hindsight_recall_mode').on('change', function() { settings().recallMode = $(this).val(); save(); });
     $('#hindsight_budget').on('change', function() { settings().budget = $(this).val(); save(); });
     $('#hindsight_model').on('change', async function() { settings().model = $(this).val(); saveSettingsDebounced(); await saveSelectedModel(); });

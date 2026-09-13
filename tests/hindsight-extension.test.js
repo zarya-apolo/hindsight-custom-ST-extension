@@ -30,7 +30,33 @@ import {
     resolveCurrentCharacter,
     resolveNetworkActionTarget,
     acknowledgeSegmentAction,
+    parseDocumentsResponse,
+    buildChatDocumentTags,
+    forceClosedSegmentActions,
 } from '../core.js';
+
+test('Manual recovery: parses Hindsight documents and rebuilds only closed blocks', () => {
+    assert.deepEqual(parseDocumentsResponse({ documents: [{ document_id: 'd1', tags: ['source:sillytavern'] }, 'd2'] }), [
+        { id: 'd1', metadata: {}, tags: ['source:sillytavern'] },
+        { id: 'd2', metadata: {}, tags: [] },
+    ]);
+    assert.deepEqual(buildChatDocumentTags({ chatId: 'chat 1', segmentId: 'seg-1' }), ['source:sillytavern', 'chat:chat 1', 'segment:seg-1']);
+
+    const messages = [
+        { mesId: 'm1', is_user: true, mes: 'one' },
+        { mesId: 'm2', is_user: false, mes: 'two' },
+        { mesId: 'm3', is_user: true, mes: 'buffer' },
+    ];
+    const plan = {
+        segments: [
+            { id: 'seg-1', documentId: 'doc-1', status: 'closed', messageIds: ['m1', 'm2'] },
+            { id: 'seg-2', documentId: 'doc-2', status: 'open', messageIds: ['m3'] },
+        ],
+    };
+    const actions = forceClosedSegmentActions(plan, messages);
+    assert.equal(actions.length, 1);
+    assert.deepEqual(actions[0].messages, messages.slice(0, 2));
+});
 
 test('Identity & Bank Routing: Auto mode produces stable bank per chat', () => {
     const res1 = resolveBankIdentity({

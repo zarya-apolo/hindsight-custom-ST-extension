@@ -40,6 +40,10 @@
             <label>Messages per automatic memory block</label>
             <input id="hindsight_messages_per_document" class="text_pole" type="number" min="1" step="1" value="15">
             <small>Completed blocks are sent only after the conversation advances into the next block. The current block stays local and editable (default 15).</small>
+            <div class="hindsight_row">
+                <button id="hindsight_sync_completed" class="menu_button" title="Re-send all completed blocks, leaving the current buffer local">Sync completed blocks</button>
+                <button id="hindsight_inspect_documents" class="menu_button" title="Ask Hindsight which documents exist in the active bank">Check Hindsight documents</button>
+            </div>
 
             <label>LLM model</label>
             <select id="hindsight_model" class="text_pole"></select>

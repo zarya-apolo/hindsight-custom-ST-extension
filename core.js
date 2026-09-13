@@ -100,10 +100,45 @@ export function buildModelEndpoints(bankId) {
         reflectModel: `/v1/default/banks/${encoded}/reflect-llm-model`,
         provider: `/v1/default/banks/${encoded}/llm-provider`,
         memories: `/v1/default/banks/${encoded}/memories`,
+        documents: `/v1/default/banks/${encoded}/documents`,
         recall: `/v1/default/banks/${encoded}/memories/recall`,
         reflect: `/v1/default/banks/${encoded}/reflect`,
         document: (docId) => `/v1/default/banks/${encoded}/documents/${encodeURIComponent(String(docId || '').trim())}`,
     };
+}
+
+export function parseDocumentsResponse(data) {
+    const list = Array.isArray(data) ? data : (data?.documents || data?.items || data?.data || []);
+    if (!Array.isArray(list)) return [];
+    return list.map(document => {
+        if (typeof document === 'string') return { id: document, metadata: {}, tags: [] };
+        if (!document || typeof document !== 'object') return null;
+        return {
+            id: document.id || document.document_id || document.documentId || '',
+            metadata: document.metadata || {},
+            tags: Array.isArray(document.tags) ? document.tags : [],
+        };
+    }).filter(document => document?.id);
+}
+
+export function buildChatDocumentTags({ chatId, segmentId } = {}) {
+    return [
+        'source:sillytavern',
+        `chat:${String(chatId || '')}`,
+        `segment:${String(segmentId || '')}`,
+    ];
+}
+
+export function forceClosedSegmentActions(plan, messages = []) {
+    if (!plan?.segments?.length) return [];
+    const byKey = new Map(messageKeys(messages).map((key, index) => [key, messages[index]]));
+    return plan.segments.filter(segment => segment.status === 'closed').map(segment => ({
+        type: 'replace',
+        segmentId: segment.id,
+        documentId: segment.documentId,
+        messages: (segment.messageIds || []).map(key => byKey.get(key)).filter(Boolean),
+        segmentMetadata: segment,
+    })).filter(action => action.messages.length > 0);
 }
 
 export function resolveNetworkActionTarget(endpoints, action) {
@@ -716,7 +751,7 @@ export function buildRetainPayload({ messages, documentId, updateMode, chatId, b
             update_mode: updateMode,
             context: 'SillyTavern roleplay/chat conversation',
             metadata: { source: 'sillytavern-hindsight-extension', chat_id: String(chatId || '') },
-            tags,
+            tags: tags.length ? tags : buildChatDocumentTags({ chatId, segmentId: String(documentId || '').split(':').pop() }),
         }],
         operation_id,
         async: true,

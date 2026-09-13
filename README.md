@@ -13,6 +13,8 @@ This is an independent browser-only SillyTavern extension. It does not modify Si
   - The current open segment is a local buffer. It is not sent to Hindsight until the conversation advances into the next segment, so edits, deletions, swipes, and regenerations in the current block do not trigger network requests.
   - Closed segments are sent as complete documents. Mutations to an already-sent segment use an isolated `replace` on that document only.
   - Managed document deletion: removing messages or truncating chats automatically deletes orphaned automatic segment documents via `DELETE /v1/default/banks/{bank}/documents/{document_id}` without touching any bank.
+  - Manual recovery: **Sync completed blocks** re-sends every closed block while leaving the current open buffer local, useful after clearing a Hindsight bank.
+  - Hindsight inventory: **Check Hindsight documents** queries the active bank and reports the total plus extension-managed documents. Automatic documents carry stable `source:sillytavern`, `chat:<id>`, and `segment:<id>` tags.
   - Global 120,000-character truncation has been removed.
 - **Creation-time threshold**:
   - Segmentation threshold applies only to newly created and open segments. Past closed segments retain their creation-time threshold.
