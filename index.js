@@ -185,14 +185,12 @@ function updateUiState() {
     const openSeg = segments.find(s => s.status === 'open') || segments[segments.length - 1];
     const totalMsgs = segments.reduce((sum, s) => sum + (s.messageCount || 0), 0);
     const currIdx = openSeg ? (segments.indexOf(openSeg) + 1) : segments.length;
-    const activeThreshold = settings().messagesPerDocument;
-    const publishedSegments = segments.filter(segment => segment.status === 'closed').length;
+    const activeThreshold = openSeg?.thresholdUsed || settings().messagesPerDocument;
 
     const stats = formatUiStatus({
         bankLabel: bank.bankLabel,
         mode: bank.mode,
         segmentCount: segments.length,
-        publishedSegmentCount: publishedSegments,
         currentSegmentIndex: currIdx,
         currentSegmentMessages: openSeg?.messageCount || 0,
         messagesPerDocument: activeThreshold,
@@ -438,8 +436,6 @@ async function loadPersistedModel() {
             $('#hindsight_reflect_model_status').text(`Persisted selection: ${reflectData.model} (${reflectData.source || 'server'})`);
             saveSettingsDebounced();
         }
-    } catch (error) {
-        console.warn('[Hindsight] model preference load failed:', error);
     }
 }
 
@@ -653,11 +649,24 @@ function onMessageMutation() {
     scheduleRetain();
 }
 
-jQuery(async () => {
+let extensionInitialized = false;
+
+async function waitForSettingsContainer(timeout = 10000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeout) {
+        const container = $('#extensions_settings2').length ? $('#extensions_settings2') : $('#extensions_settings');
+        if (container.length) return container;
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error('SillyTavern settings container not found');
+}
+
+async function initializeExtension() {
+    if (extensionInitialized) return;
+    extensionInitialized = true;
     try {
         extension_settings.hindsight = Object.assign({}, DEFAULTS, extension_settings.hindsight || {});
-        const settingsContainer = $('#extensions_settings2').length ? $('#extensions_settings2') : $('#extensions_settings');
-        if (!settingsContainer.length) throw new Error('SillyTavern settings container not found');
+        const settingsContainer = await waitForSettingsContainer();
         settingsContainer.append(await loadSettingsHtml());
         loadUi();
         bindUi();
@@ -670,9 +679,16 @@ jQuery(async () => {
         if (event_types.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, onMessageMutation);
         if (event_types.MESSAGE_UPDATED) eventSource.on(event_types.MESSAGE_UPDATED, onMessageMutation);
         if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, onMessageMutation);
-        eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onMessageMutation);
-        console.log('[Hindsight] extension loaded (buffered memory blocks enabled)');
+        if (event_types.CHARACTER_MESSAGE_RENDERED && eventSource.makeLast) {
+            eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onMessageMutation);
+        }
+        console.log('[Hindsight] extension loaded (bank-mode + segmented-doc enabled)');
     } catch (error) {
+        extensionInitialized = false;
         console.error('[Hindsight] extension initialization failed:', error);
     }
+}
+
+jQuery(() => {
+    initializeExtension();
 });
