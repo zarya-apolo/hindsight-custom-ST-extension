@@ -654,19 +654,25 @@ function onMessageMutation() {
 }
 
 jQuery(async () => {
-    extension_settings.hindsight = Object.assign({}, DEFAULTS, extension_settings.hindsight || {});
-    $('#extensions_settings2').append(await loadSettingsHtml());
-    loadUi();
-    bindUi();
-    registerTools();
-    await loadPersistedModel();
-    eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
-    eventSource.on(event_types.GENERATION_AFTER_COMMANDS, automaticRecall);
-    eventSource.on(event_types.MESSAGE_SENT, onMessageMutation);
-    if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, onMessageMutation);
-    if (event_types.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, onMessageMutation);
-    if (event_types.MESSAGE_UPDATED) eventSource.on(event_types.MESSAGE_UPDATED, onMessageMutation);
-    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, onMessageMutation);
-    eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onMessageMutation);
-    console.log('[Hindsight] extension loaded (bank-mode + segmented-doc enabled)');
+    try {
+        extension_settings.hindsight = Object.assign({}, DEFAULTS, extension_settings.hindsight || {});
+        const settingsContainer = $('#extensions_settings2').length ? $('#extensions_settings2') : $('#extensions_settings');
+        if (!settingsContainer.length) throw new Error('SillyTavern settings container not found');
+        settingsContainer.append(await loadSettingsHtml());
+        loadUi();
+        bindUi();
+        registerTools();
+        await loadPersistedModel();
+        eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+        eventSource.on(event_types.GENERATION_AFTER_COMMANDS, automaticRecall);
+        eventSource.on(event_types.MESSAGE_SENT, onMessageMutation);
+        if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, onMessageMutation);
+        if (event_types.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, onMessageMutation);
+        if (event_types.MESSAGE_UPDATED) eventSource.on(event_types.MESSAGE_UPDATED, onMessageMutation);
+        if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, onMessageMutation);
+        eventSource.makeLast(event_types.CHARACTER_MESSAGE_RENDERED, onMessageMutation);
+        console.log('[Hindsight] extension loaded (buffered memory blocks enabled)');
+    } catch (error) {
+        console.error('[Hindsight] extension initialization failed:', error);
+    }
 });
