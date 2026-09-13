@@ -430,6 +430,8 @@ async function loadPersistedModel() {
             $('#hindsight_reflect_model_status').text(`Persisted selection: ${reflectData.model} (${reflectData.source || 'server'})`);
             saveSettingsDebounced();
         }
+    } catch (error) {
+        console.warn('[Hindsight] model preference load failed:', error);
     }
 }
 
