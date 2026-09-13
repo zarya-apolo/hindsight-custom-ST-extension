@@ -489,9 +489,9 @@ test('UI Status formatting matches contract', () => {
         totalIndexedMessages: 38,
     });
     assert.equal(statusInfo.activeBankText, 'Active bank: Tavern Talk (chat_123) [auto]');
-    assert.equal(statusInfo.docCountText, 'Automatic documents: 3');
-    assert.equal(statusInfo.currentDocText, 'Current document: 3/3 (8/15 msgs)');
-    assert.equal(statusInfo.totalIndexedText, 'Indexed total: 38 messages');
+    assert.equal(statusInfo.docCountText, 'Published documents: 3');
+    assert.equal(statusInfo.currentDocText, 'Current buffer: 3/3 (8/15 msgs)');
+    assert.equal(statusInfo.totalIndexedText, 'Tracked total: 38 messages');
 });
 
 test('Real-ST identity & timestamps: 30 messages without mesId/id preserve segment 2 on segment 1 edit', () => {

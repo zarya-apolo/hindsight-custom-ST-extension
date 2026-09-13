@@ -185,12 +185,14 @@ function updateUiState() {
     const openSeg = segments.find(s => s.status === 'open') || segments[segments.length - 1];
     const totalMsgs = segments.reduce((sum, s) => sum + (s.messageCount || 0), 0);
     const currIdx = openSeg ? (segments.indexOf(openSeg) + 1) : segments.length;
-    const activeThreshold = openSeg?.thresholdUsed || settings().messagesPerDocument;
+    const activeThreshold = settings().messagesPerDocument;
+    const publishedSegments = segments.filter(segment => segment.status === 'closed').length;
 
     const stats = formatUiStatus({
         bankLabel: bank.bankLabel,
         mode: bank.mode,
         segmentCount: segments.length,
+        publishedSegmentCount: publishedSegments,
         currentSegmentIndex: currIdx,
         currentSegmentMessages: openSeg?.messageCount || 0,
         messagesPerDocument: activeThreshold,

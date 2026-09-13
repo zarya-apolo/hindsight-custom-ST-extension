@@ -25,7 +25,7 @@ This is an independent browser-only SillyTavern extension. It does not modify Si
   - Automatic recall, reflect, LLM tools (`hindsight_recall`, `hindsight_reflect`, `hindsight_retain`), and model settings route through the single active bank resolver.
   - Pre-fetch and post-fetch race checks prevent outdated responses or cross-chat memory leaks during asynchronous operations.
 - **Live Memory State Indicator**:
-  - Displays active bank, bank mode, automatic segments including the local buffer, current segment position (`X/Y (N/15 msgs)`), and total tracked messages.
+  - Displays active bank, bank mode, published document count, current local buffer position (`X/Y (N/15 msgs)`), and total tracked messages.
 
 ## Legacy Compatibility & Migration Note
 

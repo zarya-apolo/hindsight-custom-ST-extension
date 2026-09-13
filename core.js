@@ -554,30 +554,11 @@ export function computeSegmentPlan({
 
         if (currentFp !== oldSeg.fingerprint || status !== oldSeg.status) {
             const wasOpen = oldSeg.status === 'open';
-            const isLonger = group.length > (oldSeg.messageCount || 0);
-            const prefixMatched = oldSeg.fingerprint && currentFp.startsWith(oldSeg.fingerprint);
 
             // The open segment is a local buffer. Do not send its incremental
             // changes while it is still the last segment in the conversation.
             if (isLast && !isClosed) {
                 // Metadata below keeps the current buffer available locally.
-            } else if (wasOpen && isLonger && prefixMatched && status === 'open') {
-                actions.push({
-                    type: 'append',
-                    segmentId: segId,
-                    documentId: docId,
-                    messages: group.slice(oldSeg.messageCount),
-                    segmentMetadata: {
-                        id: segId,
-                        documentId: docId,
-                        status,
-                        thresholdUsed: segThreshold,
-                        messageCount: group.length,
-                        messageIds: msgKeys,
-                        fingerprints: fps,
-                        fingerprint: currentFp,
-                    },
-                });
             } else {
                 actions.push({
                     type: 'replace',
@@ -781,10 +762,11 @@ export function buildReflectPayload({ query, budget = 'mid', maxTokens = 2200, t
     return payload;
 }
 
-export function formatUiStatus({ bankLabel, mode, segmentCount, currentSegmentIndex, currentSegmentMessages, messagesPerDocument, totalIndexedMessages }) {
+export function formatUiStatus({ bankLabel, mode, segmentCount, publishedSegmentCount, currentSegmentIndex, currentSegmentMessages, messagesPerDocument, totalIndexedMessages }) {
     const label = bankLabel || 'unknown';
     const m = mode || 'auto';
     const totalDocs = Math.max(0, segmentCount || 0);
+    const publishedDocs = Math.max(0, publishedSegmentCount ?? totalDocs);
     const currIdx = totalDocs > 0 ? (currentSegmentIndex || totalDocs) : 0;
     const currMsgs = Math.max(0, currentSegmentMessages || 0);
     const threshold = Math.max(1, messagesPerDocument || 15);
@@ -792,8 +774,8 @@ export function formatUiStatus({ bankLabel, mode, segmentCount, currentSegmentIn
 
     return {
         activeBankText: `Active bank: ${label} [${m}]`,
-        docCountText: `Automatic documents: ${totalDocs}`,
-        currentDocText: totalDocs > 0 ? `Current document: ${currIdx}/${totalDocs} (${currMsgs}/${threshold} msgs)` : 'Current document: none',
-        totalIndexedText: `Indexed total: ${totalMsgs} messages`,
+        docCountText: `Published documents: ${publishedDocs}`,
+        currentDocText: totalDocs > 0 ? `Current buffer: ${currIdx}/${totalDocs} (${currMsgs}/${threshold} msgs)` : 'Current buffer: none',
+        totalIndexedText: `Tracked total: ${totalMsgs} messages`,
     };
 }

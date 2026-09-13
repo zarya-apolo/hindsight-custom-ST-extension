@@ -7,7 +7,7 @@
     <div class="inline-drawer-content">
         <div class="hindsight_section">
             <label class="checkbox_label"><input id="hindsight_enabled" type="checkbox"> Enabled</label>
-            <small>Automatic recall before each generation and asynchronous segmented retain of the current chat.</small>
+            <small>Recall runs before each generation. The current conversation block stays local until the story advances into the next block; only completed blocks are sent to Hindsight.</small>
         </div>
         <hr>
         <div class="hindsight_section">
@@ -37,7 +37,7 @@
                 <input id="hindsight_bank_id" class="text_pole" type="text" placeholder="Custom bank ID (e.g. sillytavern)">
             </div>
 
-            <label>Messages per automatic document</label>
+            <label>Messages per automatic memory block</label>
             <input id="hindsight_messages_per_document" class="text_pole" type="number" min="1" step="1" value="15">
             <small>Completed blocks are sent only after the conversation advances into the next block. The current block stays local and editable (default 15).</small>
 
@@ -70,9 +70,9 @@
         <div class="hindsight_section hindsight_info_box">
             <b>Current Chat Memory State</b>
             <div id="hindsight_stat_bank">Active bank: -</div>
-            <div id="hindsight_stat_docs">Automatic documents: 0</div>
-            <div id="hindsight_stat_curr_doc">Current document: none</div>
-            <div id="hindsight_stat_total">Indexed total: 0 messages</div>
+            <div id="hindsight_stat_docs">Published documents: 0</div>
+            <div id="hindsight_stat_curr_doc">Current buffer: none</div>
+            <div id="hindsight_stat_total">Tracked total: 0 messages</div>
         </div>
         <div id="hindsight_status" class="hindsight_status"></div>
     </div>
